@@ -151,6 +151,20 @@ struct Harness {
 
 void script_reply(FakeTransport& transport, const std::vector<std::string>& pieces) {
     transport.chunks.clear();
+    transport.chunks.push_back(sse(R"({"type":"message_start","message":{"usage":{"input_tokens":20}}})"));
+    for (const std::string& piece : pieces) {
+        transport.chunks.push_back(
+            sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")" +
+                piece + R"("}})"));
+    }
+
+    transport.chunks.push_back(
+        sse(R"({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}})"));
+    transport.chunks.push_back(sse(R"({"type":"message_stop"})"));
+}
+
+void script_openai_reply(FakeTransport& transport, const std::vector<std::string>& pieces) {
+    transport.chunks.clear();
     for (const std::string& piece : pieces) transport.chunks.push_back(text_chunk(piece));
     transport.chunks.push_back(finish_chunk("stop"));
     transport.chunks.push_back(usage_chunk(20, 5));
@@ -176,7 +190,7 @@ TEST_CASE("controller: app.ready is answered with the full state", "[controller]
     CHECK(theme_ids == std::vector<std::string>{"dark", "light"});
     CHECK(state["themes"][0]["tokens"].contains("accent"));
 
-    REQUIRE(state["providers"].size() == 2);
+    REQUIRE(state["providers"].size() == 3);
     CHECK(state["providers"][0]["id"] == "anthropic");
     CHECK(state["providers"][0]["base_url"] == "https://api.anthropic.com/v1");
     CHECK(state["providers"][0]["has_key"] == false);
@@ -231,23 +245,23 @@ TEST_CASE("controller: a chat streams started, deltas and done", "[controller]")
 
     const auto done = h.of_type("chat.done");
     REQUIRE(done.size() == 1);
-    CHECK(done[0]["stop_reason"] == "stop");
+    CHECK(done[0]["stop_reason"] == "end_turn");
     CHECK(done[0]["input_tokens"] == 20);
     CHECK(done[0]["output_tokens"] == 5);
     CHECK_FALSE(h.has("chat.error"));
 
     // The request went to the configured endpoint with the stored key and the tutor prompt.
-    CHECK(h.transport.last_request.url == "https://api.anthropic.com/v1/chat/completions");
+    CHECK(h.transport.last_request.url == "https://api.anthropic.com/v1/messages");
     bool has_auth = false;
     for (const auto& [name, value] : h.transport.last_request.headers) {
         if (name == "Authorization") has_auth = value == "Bearer sk-ant-test";
     }
-    CHECK(has_auth);
+    CHECK_FALSE(has_auth);
     const json body = h.last_request_body();
     CHECK(body["model"] == "claude-opus-5-5");
-    REQUIRE(body["messages"].size() == 2);
-    CHECK(body["messages"][0]["role"] == "system");
-    CHECK(body["messages"][1] == json{{"role", "user"}, {"content", "say hello"}});
+    CHECK(body["system"].is_string());
+    REQUIRE(body["messages"].size() == 1);
+    CHECK(body["messages"][0] == json{{"role", "user"}, {"content", "say hello"}});
 }
 
 TEST_CASE("controller: the conversation history is sent on the next turn", "[controller]") {
@@ -263,10 +277,10 @@ TEST_CASE("controller: the conversation history is sent on the next turn", "[con
     REQUIRE(h.wait_for_reply());
 
     const json body = h.last_request_body();
-    REQUIRE(body["messages"].size() == 4);
-    CHECK(body["messages"][1]["content"] == "first question");
-    CHECK(body["messages"][2] == json{{"role", "assistant"}, {"content", "first answer"}});
-    CHECK(body["messages"][3]["content"] == "second question");
+    REQUIRE(body["messages"].size() == 3);
+    CHECK(body["messages"][0]["content"] == "first question");
+    CHECK(body["messages"][1] == json{{"role", "assistant"}, {"content", "first answer"}});
+    CHECK(body["messages"][2]["content"] == "second question");
 
     SECTION("chat.clear forgets it") {
         h.ui("chat.clear");
@@ -274,7 +288,7 @@ TEST_CASE("controller: the conversation history is sent on the next turn", "[con
         script_reply(h.transport, {"fresh"});
         h.ui("chat.send", {{"request_id", "r3"}, {"text", "new topic"}});
         REQUIRE(h.pump_until([&] { return h.of_type("chat.done").size() == 2; }));
-        CHECK(h.last_request_body()["messages"].size() == 2);
+        CHECK(h.last_request_body()["messages"].size() == 1);
     }
 }
 
@@ -300,13 +314,17 @@ TEST_CASE("controller: a failed request reports the error and is not kept in the
     script_reply(h.transport, {"ok"});
     h.ui("chat.send", {{"request_id", "r2"}, {"text", "question"}});
     REQUIRE(h.wait_for_reply());
-    CHECK(h.last_request_body()["messages"].size() == 2);
+    CHECK(h.last_request_body()["messages"].size() == 1);
 }
 
 TEST_CASE("controller: cancel stops a running reply", "[controller]") {
     Harness h("cancel");
     h.credentials.entries["apikey/anthropic"] = "k";
-    h.transport.chunks = {text_chunk("partial"), text_chunk("never")};
+    h.transport.chunks = {
+        sse(R"({"type":"message_start","message":{"usage":{"input_tokens":1}}})") +
+            sse(R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})") +
+            sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}})"),
+        sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"never"}})")};
     h.transport.block_after_first_chunk = true;
 
     h.ui("chat.send", {{"request_id", "r1"}, {"text", "long question"}});
@@ -336,7 +354,10 @@ TEST_CASE("controller: cancel stops a running reply", "[controller]") {
 TEST_CASE("controller: destroying the controller mid-reply does not hang or crash", "[controller]") {
     Harness h("teardown");
     h.credentials.entries["apikey/anthropic"] = "k";
-    h.transport.chunks = {text_chunk("partial")};
+    h.transport.chunks = {
+        sse(R"({"type":"message_start","message":{"usage":{"input_tokens":1}}})") +
+            sse(R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})") +
+            sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}})")};
     h.transport.block_after_first_chunk = true;
     h.ui("chat.send", {{"request_id", "r1"}, {"text", "question"}});
     REQUIRE(h.pump_until([&] { return h.has("chat.delta"); }));
@@ -389,7 +410,7 @@ TEST_CASE("controller: a server on this PC needs no key", "[controller]") {
     Harness h("loopback");
     h.ui("settings.set_provider",
          {{"provider", "openai"}, {"base_url", "http://127.0.0.1:9931/v1"}, {"model", "local-model"}});
-    script_reply(h.transport, {"local reply"});
+    script_openai_reply(h.transport, {"local reply"});
 
     h.ui("chat.send", {{"request_id", "r1"}, {"text", "hi"}});
     REQUIRE(h.wait_for_reply());
@@ -463,7 +484,11 @@ TEST_CASE("controller: a window that loads gets the state and then the conversat
 TEST_CASE("controller: history sent mid-reply carries the partial text", "[controller][shell]") {
     Harness h("history-partial");
     h.credentials.entries["apikey/anthropic"] = "k";
-    h.transport.chunks = {text_chunk("so far"), text_chunk("never")};
+    h.transport.chunks = {
+        sse(R"({"type":"message_start","message":{"usage":{"input_tokens":1}}})") +
+            sse(R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})") +
+            sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"so far"}})"),
+        sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"never"}})")};
     h.transport.block_after_first_chunk = true;
     h.ui("chat.send", {{"request_id", "r1"}, {"text", "long one"}});
     REQUIRE(h.pump_until([&] { return h.has("chat.delta"); }));

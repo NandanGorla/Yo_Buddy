@@ -11,14 +11,16 @@
 using namespace buddy::settings;
 using json = nlohmann::json;
 
-TEST_CASE("settings: defaults list Anthropic and OpenAI on https", "[settings]") {
+TEST_CASE("settings: defaults include cloud and explicit local providers", "[settings]") {
     const Settings s = defaults();
-    REQUIRE(s.providers.size() == 2);
+    REQUIRE(s.providers.size() == 3);
     CHECK(s.provider == "anthropic");
     CHECK(s.active().id == "anthropic");
     CHECK(s.find("anthropic")->base_url == "https://api.anthropic.com/v1");
     CHECK(s.find("anthropic")->model == "claude-opus-5-5");
     CHECK(s.find("openai")->base_url == "https://api.openai.com/v1");
+    CHECK(s.find("local")->base_url == "http://127.0.0.1:9931/v1");
+    CHECK(s.find("local")->model.empty());
     CHECK(s.find("nope") == nullptr);
 }
 
@@ -66,7 +68,7 @@ TEST_CASE("settings: damaged input falls back field by field", "[settings]") {
     CHECK(s.find("anthropic")->model == "claude-opus-5-5");
     CHECK(s.find("openai")->base_url == "https://api.openai.com/v1");
     CHECK(s.find("openai")->model == "fine-model");                        // the valid field is still taken
-    CHECK(s.providers.size() == 2);                                        // unknown providers are not added
+    CHECK(s.providers.size() == 3);                                        // unknown providers are not added
     CHECK(warnings.size() == 5);
 }
 

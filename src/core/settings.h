@@ -10,7 +10,7 @@
 namespace buddy::settings {
 
 struct ProviderConfig {
-    std::string id;                 // "anthropic", "openai"
+    std::string id;                 // "anthropic", "openai", or "local"
     std::string label;              // shown in the UI
     std::string base_url;           // OpenAI-compatible endpoint, without "/chat/completions"
     std::string model;              // may be empty until the user picks one

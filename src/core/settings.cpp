@@ -43,7 +43,8 @@ const ProviderConfig& Settings::active() const {
 
 Settings defaults() {
     Settings s;
-    // Both entries use the same OpenAI-compatible client (STATUS.md D10).
+    // Cloud entries use the same OpenAI-compatible client (STATUS.md D10). Local is an explicit
+    // loopback provider: the user enters the URL and model instead of running discovery.
     // Anthropic's endpoint and model id were checked against its "OpenAI SDK compatibility" page
     // on 2026-11-15. OpenAI's model list was not checked, so no default model is assumed there.
     ProviderConfig anthropic;
@@ -64,7 +65,15 @@ Settings defaults() {
     openai.base_url = openai.default_base_url;
     openai.model = openai.default_model;
 
-    s.providers = {anthropic, openai};
+    ProviderConfig local;
+    local.id = "local";
+    local.label = "Local server";
+    local.default_base_url = "http://127.0.0.1:9931/v1";
+    local.base_url = local.default_base_url;
+    local.default_model = "";
+    local.model = "";
+
+    s.providers = {anthropic, openai, local};
     return s;
 }
 

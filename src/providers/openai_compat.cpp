@@ -116,7 +116,10 @@ public:
 
         if (const auto content = delta->find("content"); content != delta->end() && content->is_string()) {
             const std::string& piece = content->get_ref<const std::string&>();
-            if (!piece.empty() && sink_.on_text) sink_.on_text(piece);
+            if (!piece.empty()) {
+                saw_content_ = true;
+                if (sink_.on_text) sink_.on_text(piece);
+            }
         }
 
         // Tool calls arrive in fragments keyed by "index": the id and name come first, then the
@@ -146,6 +149,8 @@ public:
 
     bool saw_done() const { return saw_done_; }
     bool saw_chunk() const { return saw_chunk_; }
+    bool saw_content() const { return saw_content_; }
+    bool has_tool_calls() const { return !tool_calls_.empty(); }
     int malformed() const { return malformed_; }
     const std::string& stream_error() const { return stream_error_; }
     const std::string& finish_reason() const { return finish_reason_; }
@@ -166,11 +171,12 @@ private:
     std::optional<std::int64_t> output_tokens_;
     bool saw_done_ = false;
     bool saw_chunk_ = false;
+    bool saw_content_ = false;
     int malformed_ = 0;
 };
 
 // Handles a server that ignored "stream": true and answered with one plain JSON object.
-bool decode_whole_response(std::string_view body, const ChatSink& sink, ChatResult& result) {
+bool decode_whole_response(std::string_view body, const ChatSink& sink, ChatResult& result, bool& has_content) {
     const json root = json::parse(body, nullptr, false);
     if (!root.is_object()) return false;
     const auto choices = root.find("choices");
@@ -179,8 +185,10 @@ bool decode_whole_response(std::string_view body, const ChatSink& sink, ChatResu
     if (!choice.is_object()) return false;
     const auto message = choice.find("message");
     if (message == choice.end() || !message->is_object()) return false;
+    has_content = false;
     if (const auto content = message->find("content"); content != message->end() && content->is_string()) {
-        if (sink.on_text) sink.on_text(content->get_ref<const std::string&>());
+        has_content = !content->get_ref<const std::string&>().empty();
+        if (has_content && sink.on_text) sink.on_text(content->get_ref<const std::string&>());
     }
     if (const auto reason = choice.find("finish_reason"); reason != choice.end() && reason->is_string()) {
         result.stop_reason = reason->get<std::string>();
@@ -357,7 +365,13 @@ ChatResult OpenAiCompatProvider::chat(const std::vector<ChatMessage>& messages,
     }
 
     if (!is_event_stream) {
-        if (decode_whole_response(plain_body, sink, result)) {
+        bool has_content = false;
+        if (decode_whole_response(plain_body, sink, result, has_content)) {
+            if (!has_content) {
+                result.status = ChatStatus::BadResponse;
+                result.message = "The server returned an empty reply.";
+                return result;
+            }
             result.status = ChatStatus::Ok;
             if (result.stop_reason.empty()) result.stop_reason = "stop";
             return result;
@@ -382,6 +396,11 @@ ChatResult OpenAiCompatProvider::chat(const std::vector<ChatMessage>& messages,
     if (!decoder.saw_chunk()) {
         result.status = ChatStatus::BadResponse;
         result.message = "The server closed the stream without sending a reply.";
+        return result;
+    }
+    if (!decoder.saw_content() && !decoder.has_tool_calls()) {
+        result.status = ChatStatus::BadResponse;
+        result.message = "The server returned an empty reply.";
         return result;
     }
     if (!decoder.saw_done() && decoder.finish_reason().empty()) {

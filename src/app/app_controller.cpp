@@ -7,6 +7,7 @@
 #include "core/log.h"
 #include "core/placement.h"
 #include "core/url.h"
+#include "providers/anthropic.h"
 #include "providers/openai_compat.h"
 
 namespace buddy {
@@ -197,6 +198,32 @@ void AppController::on_message(const protocol::OpenMain& m) {
     if (deps_.open_main) deps_.open_main(m.settings);
 }
 
+void AppController::on_message(const protocol::LocalTestModel& m) {
+    if (busy_) {
+        send(protocol::host_error("busy", "Stop the current reply before testing a local model."));
+        return;
+    }
+    if (!deps_.transport || !deps_.run_on_ui) {
+        send(protocol::host_error("local_test_failed", "The app is not fully initialised."));
+        return;
+    }
+    if (worker_.joinable()) worker_.join();
+    worker_ = std::jthread([this, alive = alive_, transport = deps_.transport, run_on_ui = deps_.run_on_ui,
+                            endpoint = m.endpoint, model = m.model](std::stop_token stop) {
+        LocalEndpointConnector connector(*transport);
+        ChatResult result = connector.test_model(endpoint, model, stop);
+        run_on_ui([this, alive, model, result = std::move(result)] {
+            if (!alive->load()) return;
+            const bool vision = result.status == ChatStatus::Ok;
+            const std::string message = vision
+                                            ? "The model accepted an image and replied. Vision input works."
+                                            : (result.message.empty() ? "The model did not accept the test image."
+                                                                       : result.message);
+            send(protocol::local_test_result(model, vision, message));
+        });
+    });
+}
+
 void AppController::on_message(const protocol::UiLog& m) {
     const std::string line = "ui: " + m.message;
     if (m.level == "error") {
@@ -327,7 +354,7 @@ void AppController::on_message(const protocol::ChatSend& m) {
     if (worker_.joinable()) worker_.join();   // the previous worker has finished; reclaim it
     worker_ = std::jthread(
         [this, alive = alive_, transport = deps_.transport, run_on_ui = deps_.run_on_ui,
-         base_url = endpoint.url->to_string(), api_key = std::move(api_key), messages = std::move(messages),
+         provider_id = provider.id, base_url = endpoint.url->to_string(), api_key = std::move(api_key), messages = std::move(messages),
          options, request_id = m.request_id](std::stop_token stop) {
             auto buffer = std::make_shared<DeltaBuffer>();
 
@@ -347,8 +374,15 @@ void AppController::on_message(const protocol::ChatSend& m) {
                 }
             };
 
-            OpenAiCompatProvider provider_client(*transport, OpenAiCompatConfig{base_url, api_key});
-            ChatResult result = provider_client.chat(messages, {}, {}, options, sink, stop);
+            std::unique_ptr<IChatProvider> provider_client;
+            if (provider_id == "anthropic") {
+                provider_client = std::make_unique<AnthropicProvider>(
+                    *transport, AnthropicConfig{base_url, api_key, "2023-06-01"});
+            } else {
+                provider_client = std::make_unique<OpenAiCompatProvider>(
+                    *transport, OpenAiCompatConfig{base_url, api_key});
+            }
+            ChatResult result = provider_client->chat(messages, {}, {}, options, sink, stop);
 
             run_on_ui([this, alive, buffer, request_id, result = std::move(result)] {
                 if (!alive->load()) return;

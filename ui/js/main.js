@@ -31,6 +31,8 @@ const el = {
   model: $('model-input'),
   saveProvider: $('save-provider-button'),
   resetProvider: $('reset-provider-button'),
+  testLocal: $('test-local-button'),
+  localStatus: $('local-status'),
   keyStatus: $('key-status'),
   apiKey: $('api-key-input'),
   saveKey: $('save-key-button'),
@@ -110,6 +112,11 @@ function showProviderInForm(provider) {
     ? `A key for ${provider.label} is stored.`
     : `No key stored for ${provider.label}.`;
   el.clearKey.disabled = !provider.has_key;
+  const isLocal = provider.id === 'local';
+  el.apiKey.disabled = isLocal;
+  el.saveKey.disabled = isLocal;
+  el.clearKey.disabled = isLocal || !provider.has_key;
+  if (isLocal) el.keyStatus.textContent = 'Local servers use loopback and do not need an API key.';
 }
 
 function autosizeInput() {
@@ -232,6 +239,13 @@ bridge.on('chat.cleared', () => {
 
 bridge.on('host.error', (payload) => {
   if (!isPanel) showBanner(payload.message || payload.code);
+  if (payload.code === 'local_test_failed') {
+    el.localStatus.textContent = payload.message || payload.code;
+  }
+});
+
+bridge.on('local.test_result', (payload) => {
+  el.localStatus.textContent = payload.message;
 });
 
 bridge.on('ui.focus_input', focusInput);
@@ -321,6 +335,12 @@ el.resetProvider.addEventListener('click', () => {
   if (!provider) return;
   el.baseUrl.value = provider.default_base_url;
   el.model.value = provider.default_model;
+});
+
+el.testLocal.addEventListener('click', () => {
+  const endpoint = el.baseUrl.value.trim();
+  const model = el.model.value.trim();
+  if (endpoint.length > 0 && model.length > 0) send('local.test_model', { endpoint, model });
 });
 
 el.saveKey.addEventListener('click', () => {

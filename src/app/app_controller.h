@@ -15,6 +15,7 @@
 #include "core/settings.h"
 #include "core/theme.h"
 #include "providers/http.h"
+#include "providers/local_endpoint.h"
 #include "providers/provider.h"
 
 namespace buddy {
@@ -101,6 +102,7 @@ private:
     void on_message(const protocol::SetPanel&);
     void on_message(const protocol::WindowHide&);
     void on_message(const protocol::OpenMain&);
+    void on_message(const protocol::LocalTestModel&);
 
     void send_history() const;
 

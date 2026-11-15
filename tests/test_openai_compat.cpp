@@ -167,6 +167,14 @@ TEST_CASE("an empty stream is a bad response", "[provider]") {
     CHECK(run_chat(transport).result.status == ChatStatus::BadResponse);
 }
 
+TEST_CASE("a completed stream with no text is reported as an empty reply", "[provider]") {
+    FakeTransport transport;
+    transport.chunks = {sse(R"({"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]})"), done_marker()};
+    const Run run = run_chat(transport);
+    CHECK(run.result.status == ChatStatus::BadResponse);
+    CHECK(run.result.message == "The server returned an empty reply.");
+}
+
 TEST_CASE("tool call fragments are assembled", "[provider]") {
     FakeTransport transport;
     transport.chunks = {

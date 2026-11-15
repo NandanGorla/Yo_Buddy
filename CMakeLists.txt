@@ -34,6 +34,8 @@ target_link_libraries(buddy_core PUBLIC nlohmann_json::nlohmann_json)
 
 # --- providers: the chat provider interface and the OpenAI-compatible client. No Windows headers. ---
 add_library(buddy_providers STATIC
+  src/providers/anthropic.cpp
+  src/providers/local_endpoint.cpp
   src/providers/openai_compat.cpp
   src/providers/sse_parser.cpp
 )
@@ -94,8 +96,10 @@ if(BUDDY_BUILD_TESTS)
   add_executable(buddy_tests
     tests/fake_transport.h
     tests/test_app_controller.cpp
+    tests/test_anthropic.cpp
     tests/test_credential_store.cpp
     tests/test_hotkey.cpp
+    tests/test_local_endpoint.cpp
     tests/test_openai_compat.cpp
     tests/test_placement.cpp
     tests/test_protocol.cpp

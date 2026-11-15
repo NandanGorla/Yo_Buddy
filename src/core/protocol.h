@@ -64,9 +64,14 @@ struct SetPanel {                                    // "settings.set_panel"   {
 };
 struct WindowHide {};                                // "window.hide"          {}   hide the window that sent it
 struct OpenMain { bool settings = false; };          // "window.open_main"     {settings}
+struct LocalTestModel {                              // "local.test_model"    {endpoint, model}
+    std::string endpoint;
+    std::string model;
+};
 
 using UiMessage = std::variant<AppReady, ChatSend, ChatCancel, ChatClear, SetTheme, SetProvider,
-                               SetApiKey, ClearApiKey, UiLog, SetHotkey, SetPanel, WindowHide, OpenMain>;
+                               SetApiKey, ClearApiKey, UiLog, SetHotkey, SetPanel, WindowHide, OpenMain,
+                               LocalTestModel>;
 
 struct ParseResult {
     std::optional<UiMessage> message;
@@ -110,5 +115,6 @@ std::string chat_error(std::string_view request_id, std::string_view code,
                        std::string_view message);                                  // "chat.error"
 std::string chat_cleared();                                                        // "chat.cleared"
 std::string host_error(std::string_view code, std::string_view message);           // "host.error"
+std::string local_test_result(std::string_view model, bool vision, std::string_view message); // "local.test_result"
 
 }  // namespace buddy::protocol

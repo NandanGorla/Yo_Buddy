@@ -144,6 +144,18 @@ ParseResult parse_payload(const std::string& type, const json& p) {
         }
         return ok(OpenMain{p["settings"].get<bool>()});
     }
+    if (type == "local.test_model") {
+        if (!has_exactly(p, {"endpoint", "model"})) return bad_payload(type, "expected endpoint and model");
+        const auto* endpoint = string_field(p, "endpoint");
+        const auto* model = string_field(p, "model");
+        if (!endpoint || endpoint->empty() || endpoint->size() > kMaxBaseUrlLength) {
+            return bad_payload(type, "endpoint must be a non-empty string of reasonable length");
+        }
+        if (!model || !is_valid_model(*model) || model->empty()) {
+            return bad_payload(type, "model is invalid");
+        }
+        return ok(LocalTestModel{*endpoint, *model});
+    }
     return fail("unknown_type", "unknown message type");
 }
 
@@ -250,6 +262,10 @@ std::string chat_cleared() { return make_message("chat.cleared", json::object())
 
 std::string host_error(std::string_view code, std::string_view message) {
     return make_message("host.error", {{"code", code}, {"message", message}});
+}
+
+std::string local_test_result(std::string_view model, bool vision, std::string_view message) {
+    return make_message("local.test_result", {{"model", model}, {"vision", vision}, {"message", message}});
 }
 
 }  // namespace buddy::protocol

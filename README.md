@@ -82,8 +82,8 @@ Requirements:
 Steps, from a normal Command Prompt:
 
 ```bat
-git clone <repository-url> Buddy
-cd Buddy
+git clone https://github.com/NandanGorla/Yo_Buddy
+cd Yo_Buddy
 scripts\build.cmd
 ```
 

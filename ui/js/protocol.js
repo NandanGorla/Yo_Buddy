@@ -62,6 +62,13 @@ const OUTGOING = {
     hasExactly(p, ['hide_on_click_away', 'pinned']) && isBool(p.hide_on_click_away) && isBool(p.pinned),
   'window.hide': (p) => hasExactly(p, []),
   'window.open_main': (p) => hasExactly(p, ['settings']) && isBool(p.settings),
+  'local.test_model': (p) =>
+    hasExactly(p, ['endpoint', 'model']) &&
+    isString(p.endpoint, MAX_BASE_URL) &&
+    p.endpoint.length > 0 &&
+    typeof p.model === 'string' &&
+    MODEL_RE.test(p.model) &&
+    p.model.length > 0,
   'ui.log': (p) =>
     hasExactly(p, ['level', 'message']) &&
     ['info', 'warn', 'error'].includes(p.level) &&
@@ -157,6 +164,11 @@ const INCOMING = {
     hasExactly(p, ['request_id', 'code', 'message']) && isId(p.request_id) && isString(p.code, 64) && isString(p.message, 4000),
   'chat.cleared': (p) => hasExactly(p, []),
   'host.error': (p) => hasExactly(p, ['code', 'message']) && isString(p.code, 64) && isString(p.message, 4000),
+  'local.test_result': (p) =>
+    hasExactly(p, ['model', 'vision', 'message']) &&
+    isString(p.model, 128) &&
+    isBool(p.vision) &&
+    isString(p.message, 4000),
 };
 
 // Checks a message from the host. Returns { ok: true, type, payload } or { ok: false, error }.
