@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "dark",
+  "name": "Dark",
+  "kind": "dark",
+  "tokens": {
+    "bg": "#15171c",
+    "surface": "#1c1f26",
+    "surface-raised": "#262a33",
+    "text": "#e6e8ec",
+    "text-muted": "#9aa3b2",
+    "accent": "#6ea8ff",
+    "accent-text": "#0b1220",
+    "border": "#333845",
+    "danger": "#ff8a80",
+    "code-bg": "#0f1115",
+    "code-text": "#dfe3ea",
+    "radius": "8px",
+    "font-ui": "Segoe UI Variable Text, Segoe UI, sans-serif",
+    "font-mono": "Cascadia Code, Cascadia Mono, Consolas, monospace"
+  },
+  "overlay": {
+    "highlight": "#ffb000",
+    "label-bg": "#15171ce6",
+    "label-text": "#ffffff"
+  }
+}

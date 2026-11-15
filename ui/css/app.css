@@ -1,0 +1,190 @@
+/*
+  Buddy UI styles.
+
+  Every colour, radius and font comes from a design token: a CSS variable named --bd-<token>
+  that js/theme.js sets from the active theme file. There are no colour literals in this file.
+  The page stays hidden until a theme has been applied, so it never flashes unstyled.
+*/
+
+html:not([data-theme]) body { visibility: hidden; }
+html[data-kind="dark"], html[data-kind="high-contrast"] { color-scheme: dark; }
+html[data-kind="light"] { color-scheme: light; }
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  display: flex;
+  flex-direction: column;
+  background: var(--bd-bg);
+  color: var(--bd-text);
+  font-family: var(--bd-font-ui);
+  font-size: 14px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+h1, h2, h3 { margin: 0; font-weight: 600; }
+[hidden] { display: none !important; }
+
+/* ---- top bar ---- */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--bd-surface);
+  border-bottom: 1px solid var(--bd-border);
+}
+.brand { font-size: 16px; }
+.topbar-spacer { flex: 1; }
+.model-badge {
+  padding: 2px 10px;
+  border: 1px solid var(--bd-border);
+  border-radius: 999px;
+  background: var(--bd-surface-raised);
+  color: var(--bd-text-muted);
+  font-family: var(--bd-font-mono);
+  font-size: 12px;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.field-inline { display: flex; align-items: center; gap: 6px; color: var(--bd-text-muted); }
+
+/* ---- controls ---- */
+.btn, select, input, textarea {
+  font: inherit;
+  color: var(--bd-text);
+  background: var(--bd-surface-raised);
+  border: 1px solid var(--bd-border);
+  border-radius: var(--bd-radius);
+}
+.btn { padding: 5px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--bd-accent); }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.btn-primary { background: var(--bd-accent); color: var(--bd-accent-text); border-color: var(--bd-accent); }
+select { padding: 4px 8px; }
+input, textarea { padding: 6px 8px; width: 100%; }
+:focus-visible { outline: 2px solid var(--bd-accent); outline-offset: 1px; }
+
+/* ---- banner (errors and notices from the host) ---- */
+.banner {
+  padding: 8px 14px;
+  background: var(--bd-surface-raised);
+  border-bottom: 1px solid var(--bd-border);
+  color: var(--bd-danger);
+}
+
+/* ---- layout ---- */
+.layout { flex: 1; display: flex; min-height: 0; }
+.chat { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.messages { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+.empty-hint { margin: auto; color: var(--bd-text-muted); }
+
+.msg { max-width: 860px; width: 100%; margin: 0 auto; }
+.msg-meta { font-size: 12px; color: var(--bd-text-muted); margin-bottom: 2px; }
+.msg-body {
+  padding: 10px 14px;
+  background: var(--bd-surface);
+  border: 1px solid var(--bd-border);
+  border-radius: var(--bd-radius);
+  overflow-wrap: anywhere;
+}
+.msg-user .msg-body { background: var(--bd-surface-raised); white-space: pre-wrap; }
+.msg-error .msg-body { color: var(--bd-danger); border-color: var(--bd-danger); }
+.msg-note { font-size: 12px; color: var(--bd-text-muted); margin-top: 2px; }
+
+/* ---- rendered Markdown (model output, sanitised in js/markdown.js) ---- */
+.md > :first-child { margin-top: 0; }
+.md > :last-child { margin-bottom: 0; }
+.md p, .md ul, .md ol, .md blockquote, .md pre, .md table { margin: 0 0 10px; }
+.md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; font-size: 15px; }
+.md h1 { font-size: 18px; }
+.md h2 { font-size: 16px; }
+.md code {
+  font-family: var(--bd-font-mono);
+  font-size: 13px;
+  background: var(--bd-code-bg);
+  color: var(--bd-code-text);
+  padding: 1px 4px;
+  border-radius: 4px;
+}
+.md pre {
+  background: var(--bd-code-bg);
+  color: var(--bd-code-text);
+  border: 1px solid var(--bd-border);
+  border-radius: var(--bd-radius);
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.md pre code { background: none; padding: 0; white-space: pre; }
+.md blockquote { padding-left: 12px; border-left: 3px solid var(--bd-border); color: var(--bd-text-muted); }
+.md table { border-collapse: collapse; display: block; overflow-x: auto; }
+.md th, .md td { border: 1px solid var(--bd-border); padding: 4px 8px; }
+.md hr { border: none; border-top: 1px solid var(--bd-border); }
+.md .md-url { color: var(--bd-text-muted); font-family: var(--bd-font-mono); font-size: 12px; }
+
+/* ---- composer ---- */
+.composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--bd-border);
+  background: var(--bd-surface);
+}
+.composer textarea { flex: 1; resize: none; max-height: 200px; }
+
+/* ---- settings panel ---- */
+.settings {
+  width: 320px;
+  flex: none;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--bd-surface);
+  border-left: 1px solid var(--bd-border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings h2 { font-size: 15px; }
+.settings h3 { font-size: 13px; margin-top: 8px; }
+.field { display: flex; flex-direction: column; gap: 3px; color: var(--bd-text-muted); font-size: 12px; }
+.field input, .field select { font-size: 13px; }
+.row { display: flex; gap: 8px; }
+.hint { margin: 0; font-size: 12px; color: var(--bd-text-muted); }
+
+/* ---- narrow windows ---- */
+.btn { white-space: nowrap; }
+.layout { position: relative; }
+@media (max-width: 760px) {
+  /* Too narrow for two columns: the settings panel covers the chat instead of squeezing it. */
+  .settings { position: absolute; inset: 0; width: auto; border-left: none; z-index: 1; }
+  .field-inline > span { display: none; }
+}
+
+/* ---- code is shown exactly as written: no ligatures turning <= into a single glyph ---- */
+.md code, .md pre { font-variant-ligatures: none; }
+
+/* ---- settings: checkboxes ---- */
+.check { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; }
+.check input { width: auto; margin-top: 3px; }
+
+/* ---- one page, two windows ---- */
+html[data-view="main"] .panel-only { display: none; }
+html[data-view="panel"] .main-only { display: none; }
+
+/* The floating panel: the same chat, compact. Its header doubles as the handle that moves the
+   frameless window ("app-region: drag"); the controls in it must opt out to stay clickable. */
+html[data-view="panel"] .topbar { padding: 4px 6px 6px 10px; gap: 6px; app-region: drag; }
+html[data-view="panel"] .topbar .btn { app-region: no-drag; padding: 2px 8px; font-size: 12px; }
+html[data-view="panel"] .brand { font-size: 13px; }
+html[data-view="panel"] .model-badge { font-size: 11px; max-width: 45%; }
+html[data-view="panel"] .messages { padding: 10px; gap: 8px; }
+html[data-view="panel"] .msg-body { padding: 8px 10px; }
+html[data-view="panel"] .composer { padding: 8px; gap: 6px; }
+html[data-view="panel"] .empty-hint { font-size: 13px; }
+html[data-view="panel"] #pin-button[aria-pressed="true"] { background: var(--bd-accent); color: var(--bd-accent-text); border-color: var(--bd-accent); }

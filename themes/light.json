@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "id": "light",
+  "name": "Light",
+  "kind": "light",
+  "tokens": {
+    "bg": "#f6f7f9",
+    "surface": "#ffffff",
+    "surface-raised": "#eef0f4",
+    "text": "#1c1f24",
+    "text-muted": "#5b6370",
+    "accent": "#2456d6",
+    "accent-text": "#ffffff",
+    "border": "#d5d9e0",
+    "danger": "#b3261e",
+    "code-bg": "#eef0f4",
+    "code-text": "#1c1f24",
+    "radius": "8px",
+    "font-ui": "Segoe UI Variable Text, Segoe UI, sans-serif",
+    "font-mono": "Cascadia Code, Cascadia Mono, Consolas, monospace"
+  },
+  "overlay": {
+    "highlight": "#d97a00",
+    "label-bg": "#1c1f24e6",
+    "label-text": "#ffffff"
+  }
+}

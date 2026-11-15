@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <!--
+    Content Security Policy. The UI makes no network requests at all: every model call is made
+    by the C++ host. Scripts, styles, images and fonts load only from this bundled origin, and
+    nothing may be fetched, framed, embedded or submitted anywhere.
+
+    "require-trusted-types-for" makes the browser refuse plain strings at DOM injection points
+    such as innerHTML. The only policy allowed is DOMPurify's, which it uses internally while
+    sanitising model output.
+  -->
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types dompurify">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Buddy</title>
+  <link rel="stylesheet" href="css/app.css">
+  <script type="module" src="js/main.js"></script>
+</head>
+<!--
+  This one page is shown in two windows. The main window loads it as-is. The floating panel
+  loads it with ?view=panel, which js/main.js turns into data-view="panel" on <html>; the
+  stylesheet then switches to the compact layout. Elements marked "panel-only" or "main-only"
+  appear in one of the two.
+-->
+<body>
+  <header class="topbar">
+    <h1 class="brand">Buddy</h1>
+    <span class="model-badge" id="model-badge" title="The model that answers your next message">No model</span>
+    <span class="topbar-spacer"></span>
+    <label class="field-inline main-only">
+      <span>Theme</span>
+      <select id="theme-select" aria-label="Theme"></select>
+    </label>
+    <button type="button" class="btn" id="new-chat-button">New chat</button>
+    <button type="button" class="btn main-only" id="settings-button" aria-expanded="false" aria-controls="settings-panel">Settings</button>
+    <button type="button" class="btn panel-only" id="pin-button" aria-pressed="false" title="Keep the panel open when you click elsewhere">Pin</button>
+    <button type="button" class="btn panel-only" id="open-main-button" title="Open the full Buddy window">Open</button>
+    <button type="button" class="btn panel-only" id="hide-button" title="Hide (Esc)">Hide</button>
+  </header>
+
+  <div class="banner" id="banner" role="status" hidden></div>
+
+  <main class="layout">
+    <section class="chat" aria-label="Conversation">
+      <div class="messages" id="messages" aria-live="polite">
+        <p class="empty-hint" id="empty-hint">Ask a question to get started.</p>
+      </div>
+      <form class="composer" id="composer">
+        <textarea id="composer-input" rows="2" placeholder="Message Buddy. Enter sends, Shift+Enter adds a line."
+                  aria-label="Message" maxlength="100000"></textarea>
+        <button type="submit" class="btn btn-primary" id="send-button">Send</button>
+        <button type="button" class="btn" id="stop-button" hidden>Stop</button>
+      </form>
+    </section>
+
+    <aside class="settings main-only" id="settings-panel" aria-label="Settings" hidden>
+      <h2>Settings</h2>
+
+      <label class="field">
+        <span>Provider</span>
+        <select id="provider-select"></select>
+      </label>
+      <label class="field">
+        <span>Endpoint URL</span>
+        <input type="text" id="base-url-input" spellcheck="false" autocomplete="off">
+      </label>
+      <label class="field">
+        <span>Model</span>
+        <input type="text" id="model-input" spellcheck="false" autocomplete="off" placeholder="model id">
+      </label>
+      <div class="row">
+        <button type="button" class="btn btn-primary" id="save-provider-button">Save and use</button>
+        <button type="button" class="btn" id="reset-provider-button">Defaults</button>
+      </div>
+
+      <h3>API key</h3>
+      <p class="hint" id="key-status">No key stored.</p>
+      <label class="field">
+        <span>New key</span>
+        <input type="password" id="api-key-input" spellcheck="false" autocomplete="off">
+      </label>
+      <div class="row">
+        <button type="button" class="btn btn-primary" id="save-key-button">Save key</button>
+        <button type="button" class="btn" id="clear-key-button">Remove key</button>
+      </div>
+      <p class="hint">Keys are stored in Windows Credential Manager. Buddy never writes them to a file and never shows them again.</p>
+
+      <h3>Floating panel</h3>
+      <label class="field">
+        <span>Shortcut that shows and hides the panel</span>
+        <input type="text" id="hotkey-input" spellcheck="false" autocomplete="off" placeholder="Alt+Shift+Space">
+      </label>
+      <div class="row">
+        <button type="button" class="btn btn-primary" id="save-hotkey-button">Apply shortcut</button>
+      </div>
+      <p class="hint" id="hotkey-status"></p>
+      <label class="check">
+        <input type="checkbox" id="click-away-checkbox">
+        <span>Hide the panel when I click another window</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="pinned-checkbox">
+        <span>Keep the panel pinned open</span>
+      </label>
+      <p class="hint">Esc always hides the panel and returns to the app you were in.</p>
+
+      <p class="hint" id="version-line"></p>
+    </aside>
+  </main>
+</body>
+</html>
