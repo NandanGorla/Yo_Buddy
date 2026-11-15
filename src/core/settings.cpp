@@ -9,6 +9,7 @@
 #include "core/hotkey.h"
 #include "core/placement.h"
 #include "core/protocol.h"
+#include "core/theme.h"
 #include "core/url.h"
 
 namespace buddy::settings {
@@ -43,6 +44,7 @@ const ProviderConfig& Settings::active() const {
 
 Settings defaults() {
     Settings s;
+    s.capture_exclusions = {"1Password", "Bitwarden", "KeePass", "LastPass", "Windows Security"};
     // Cloud entries use the same OpenAI-compatible client (STATUS.md D10). Local is an explicit
     // loopback provider: the user enters the URL and model instead of running discovery.
     // Anthropic's endpoint and model id were checked against its "OpenAI SDK compatibility" page
@@ -142,6 +144,43 @@ Settings from_json(std::string_view text, std::vector<std::string>* warnings) {
         s.panel_height = clamped.height;
     }
     if (const auto it = root.find("muted"); it != root.end() && it->is_boolean()) s.muted = it->get<bool>();
+    if (const auto it = root.find("overlay"); it != root.end() && it->is_object()) {
+        const auto read_color = [&](const char* key, std::string& out) {
+            const auto value = it->find(key);
+            if (value != it->end() && value->is_string() && theme::is_valid_color(value->get_ref<const std::string&>())) {
+                out = value->get<std::string>();
+            } else if (value != it->end()) {
+                warn(warnings, std::string("ignored invalid overlay ") + key);
+            }
+        };
+        read_color("ring", s.overlay_ring_color);
+        read_color("dot", s.overlay_dot_color);
+        read_color("caption", s.overlay_caption_color);
+    }
+    if (const auto it = root.find("capture"); it != root.end() && it->is_object()) {
+        if (const auto exclusions = it->find("exclusions"); exclusions != it->end()) {
+            if (!exclusions->is_array() || exclusions->size() > 64) {
+                warn(warnings, "ignored invalid capture exclusions");
+            } else {
+                std::vector<std::string> parsed;
+                bool valid = true;
+                for (const auto& value : *exclusions) {
+                    if (!value.is_string() || value.get<std::string>().empty() ||
+                        value.get<std::string>().size() > 128) {
+                        valid = false;
+                        break;
+                    }
+                    parsed.push_back(value.get<std::string>());
+                }
+                if (valid) s.capture_exclusions = std::move(parsed);
+                else warn(warnings, "ignored invalid capture exclusions");
+            }
+        }
+        if (const auto preview = it->find("send_preview"); preview != it->end()) {
+            if (preview->is_boolean()) s.capture_send_preview = preview->get<bool>();
+            else warn(warnings, "ignored invalid capture send_preview");
+        }
+    }
 
     if (const auto it = root.find("provider"); it != root.end()) {
         if (it->is_string() && s.find(it->get_ref<const std::string&>()) != nullptr) {
@@ -168,7 +207,14 @@ std::string to_json(const Settings& settings) {
                          {"height", settings.panel_height},
                          {"hide_on_click_away", settings.hide_on_click_away},
                          {"pinned", settings.panel_pinned}}},
-                       {"muted", settings.muted}};
+                       {"muted", settings.muted},
+                       {"overlay",
+                        {{"ring", settings.overlay_ring_color},
+                         {"dot", settings.overlay_dot_color},
+                         {"caption", settings.overlay_caption_color}}},
+                       {"capture",
+                        {{"exclusions", settings.capture_exclusions},
+                         {"send_preview", settings.capture_send_preview}}}};
     return root.dump(2);
 }
 

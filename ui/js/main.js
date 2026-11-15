@@ -15,6 +15,10 @@ const $ = (id) => document.getElementById(id);
 const el = {
   modelBadge: $('model-badge'),
   themeSelect: $('theme-select'),
+  overlayRingColor: $('overlay-ring-color'),
+  overlayDotColor: $('overlay-dot-color'),
+  overlayCaptionColor: $('overlay-caption-color'),
+  saveOverlayColors: $('save-overlay-colors-button'),
   newChat: $('new-chat-button'),
   settingsButton: $('settings-button'),
   settingsPanel: $('settings-panel'),
@@ -42,6 +46,14 @@ const el = {
   hotkeyStatus: $('hotkey-status'),
   clickAway: $('click-away-checkbox'),
   pinned: $('pinned-checkbox'),
+  captureExclusions: $('capture-exclusions'),
+  capturePreview: $('capture-preview-checkbox'),
+  saveCapture: $('save-capture-button'),
+  overlayDemo: $('overlay-demo-button'),
+  overlayIndicator: $('overlay-indicator-button'),
+  overlayClear: $('overlay-clear-button'),
+  overlayCaption: $('overlay-caption-input'),
+  overlayCaptionButton: $('overlay-caption-button'),
   versionLine: $('version-line'),
 };
 
@@ -166,6 +178,11 @@ bridge.on('app.state', (payload) => {
     document.documentElement.dataset.theme = 'invalid';   // still reveal the page
   }
   fillSelect(el.themeSelect, payload.themes.map((t) => ({ id: t.id, label: t.name })), theme.id);
+  if (payload.overlay) {
+    el.overlayRingColor.value = payload.overlay.ring;
+    el.overlayDotColor.value = payload.overlay.dot;
+    el.overlayCaptionColor.value = payload.overlay.caption;
+  }
 
   const active = providerById(payload.provider) || payload.providers[0];
   el.modelBadge.textContent = `${active.label} · ${active.model || 'no model'}`;
@@ -178,6 +195,8 @@ bridge.on('app.state', (payload) => {
   showHotkeyState(payload.hotkey);
   el.clickAway.checked = payload.panel.hide_on_click_away;
   el.pinned.checked = payload.panel.pinned;
+  el.captureExclusions.value = payload.capture.exclusions.join('\n');
+  el.capturePreview.checked = payload.capture.send_preview;
   el.pin.setAttribute('aria-pressed', String(payload.panel.pinned));
   el.pin.textContent = payload.panel.pinned ? 'Pinned' : 'Pin';
 
@@ -312,6 +331,13 @@ el.newChat.addEventListener('click', () => {
 el.themeSelect.addEventListener('change', () => {
   send('settings.set_theme', { theme: el.themeSelect.value });
 });
+el.saveOverlayColors.addEventListener('click', () => {
+  send('settings.set_overlay', {
+    ring: el.overlayRingColor.value,
+    dot: el.overlayDotColor.value,
+    caption: el.overlayCaptionColor.value,
+  });
+});
 
 el.settingsButton.addEventListener('click', () => {
   openSettings(el.settingsPanel.hidden);
@@ -378,6 +404,29 @@ function sendPanelOptions(pinned) {
 
 el.clickAway.addEventListener('change', () => sendPanelOptions(el.pinned.checked));
 el.pinned.addEventListener('change', () => sendPanelOptions(el.pinned.checked));
+
+el.saveCapture.addEventListener('click', () => {
+  const exclusions = el.captureExclusions.value
+    .split(/\r?\n/)
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  if (exclusions.length > 64 || exclusions.some((value) => value.length > 128)) {
+    showBanner('Capture exclusions must contain at most 64 entries of 128 characters each.');
+    return;
+  }
+  send('settings.set_capture', {
+    exclusions,
+    send_preview: el.capturePreview.checked,
+  });
+});
+
+function overlayDebug(action, caption = '') {
+  send('overlay.debug', { action, caption });
+}
+el.overlayDemo.addEventListener('click', () => overlayDebug('demo'));
+el.overlayIndicator.addEventListener('click', () => overlayDebug('indicator'));
+el.overlayClear.addEventListener('click', () => overlayDebug('clear'));
+el.overlayCaptionButton.addEventListener('click', () => overlayDebug('caption', el.overlayCaption.value));
 
 el.pin.addEventListener('click', () => {
   sendPanelOptions(el.pin.getAttribute('aria-pressed') !== 'true');

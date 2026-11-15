@@ -32,6 +32,14 @@ struct Settings {
     bool panel_pinned = false;                // pinned: stays open until hidden explicitly
     bool muted = false;                       // tray "Mute"; silences spoken output once M3 adds it
 
+    // Capture is always user-triggered. These executable/window-name fragments are excluded
+    // before a frame can be shown or sent, and preview remains required for remote endpoints.
+    std::vector<std::string> capture_exclusions;
+    bool capture_send_preview = true;
+    std::string overlay_ring_color = "#ffb000";
+    std::string overlay_dot_color = "#ffffff";
+    std::string overlay_caption_color = "#ffffff";
+
     const ProviderConfig* find(std::string_view id) const;
     ProviderConfig* find(std::string_view id);
     const ProviderConfig& active() const;   // falls back to the first provider

@@ -25,6 +25,7 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const isString = (v, max = MAX_TEXT) => typeof v === 'string' && v.length <= max;
 const isId = (v) => typeof v === 'string' && ID_RE.test(v);
 const isBool = (v) => typeof v === 'boolean';
+const isColor = (v) => typeof v === 'string' && /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(v);
 const isCountOrNull = (v) => v === null || (Number.isSafeInteger(v) && v >= 0);
 
 // True when `obj` has exactly these keys: nothing missing and nothing extra.
@@ -47,6 +48,11 @@ const OUTGOING = {
   'chat.cancel': (p) => hasExactly(p, ['request_id']) && isId(p.request_id),
   'chat.clear': (p) => hasExactly(p, []),
   'settings.set_theme': (p) => hasExactly(p, ['theme']) && isId(p.theme),
+  'settings.set_overlay': (p) =>
+    hasExactly(p, ['ring', 'dot', 'caption']) &&
+    isColor(p.ring) &&
+    isColor(p.dot) &&
+    isColor(p.caption),
   'settings.set_provider': (p) =>
     hasExactly(p, ['provider', 'base_url', 'model']) &&
     isId(p.provider) &&
@@ -60,6 +66,16 @@ const OUTGOING = {
   'settings.set_hotkey': (p) => hasExactly(p, ['hotkey']) && isString(p.hotkey, 64) && p.hotkey.length > 0,
   'settings.set_panel': (p) =>
     hasExactly(p, ['hide_on_click_away', 'pinned']) && isBool(p.hide_on_click_away) && isBool(p.pinned),
+  'settings.set_capture': (p) =>
+    hasExactly(p, ['exclusions', 'send_preview']) &&
+    Array.isArray(p.exclusions) &&
+    p.exclusions.length <= 64 &&
+    p.exclusions.every((x) => typeof x === 'string' && x.length > 0 && x.length <= 128) &&
+    isBool(p.send_preview),
+  'overlay.debug': (p) =>
+    hasExactly(p, ['action', 'caption']) &&
+    ['demo', 'clear', 'indicator', 'caption'].includes(p.action) &&
+    isString(p.caption, 512),
   'window.hide': (p) => hasExactly(p, []),
   'window.open_main': (p) => hasExactly(p, ['settings']) && isBool(p.settings),
   'local.test_model': (p) =>
@@ -69,6 +85,10 @@ const OUTGOING = {
     typeof p.model === 'string' &&
     MODEL_RE.test(p.model) &&
     p.model.length > 0,
+  'capture.request': (p) =>
+    hasExactly(p, ['target', 'preview']) &&
+    (p.target === 'monitor' || p.target === 'window') &&
+    isBool(p.preview),
   'ui.log': (p) =>
     hasExactly(p, ['level', 'message']) &&
     ['info', 'warn', 'error'].includes(p.level) &&
@@ -115,15 +135,27 @@ const isHotkeyState = (h) =>
 
 const isPanelState = (s) =>
   hasExactly(s, ['hide_on_click_away', 'pinned']) && isBool(s.hide_on_click_away) && isBool(s.pinned);
+const isOverlayState = (o) =>
+  hasExactly(o, ['ring', 'dot', 'caption']) &&
+  isColor(o.ring) &&
+  isColor(o.dot) &&
+  isColor(o.caption);
 
 const isHistoryMessage = (m) =>
   hasExactly(m, ['role', 'text']) && ['user', 'assistant'].includes(m.role) && isString(m.text);
 
 const INCOMING = {
   'app.state': (p) =>
-    hasExactly(p, ['app_version', 'themes', 'theme', 'provider', 'providers', 'busy', 'hotkey', 'panel', 'muted']) &&
+    hasExactly(p, ['app_version', 'themes', 'theme', 'provider', 'providers', 'busy', 'hotkey', 'panel', 'capture', 'muted', 'overlay']) &&
     isHotkeyState(p.hotkey) &&
     isPanelState(p.panel) &&
+    isOverlayState(p.overlay) &&
+    isObject(p.capture) &&
+    hasExactly(p.capture, ['exclusions', 'send_preview']) &&
+    Array.isArray(p.capture.exclusions) &&
+    p.capture.exclusions.length <= 64 &&
+    p.capture.exclusions.every((x) => typeof x === 'string' && x.length > 0 && x.length <= 128) &&
+    isBool(p.capture.send_preview) &&
     isBool(p.muted) &&
     isString(p.app_version, 32) &&
     Array.isArray(p.themes) &&

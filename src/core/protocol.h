@@ -31,6 +31,8 @@ inline constexpr std::size_t kMaxBaseUrlLength = 2048;
 inline constexpr std::size_t kMaxApiKeyLength = 512;
 inline constexpr std::size_t kMaxLogLength = 2000;
 inline constexpr std::size_t kMaxHotkeyLength = 64;
+inline constexpr std::size_t kMaxCaptureExclusions = 64;
+inline constexpr std::size_t kMaxCaptureExclusionLength = 128;
 
 // ---- UI -> host -------------------------------------------------------------------------------
 
@@ -42,6 +44,11 @@ struct ChatSend {                                    // "chat.send"            {
 struct ChatCancel { std::string request_id; };       // "chat.cancel"          {request_id}
 struct ChatClear {};                                 // "chat.clear"           {}
 struct SetTheme { std::string theme; };              // "settings.set_theme"   {theme}
+struct SetOverlayPalette {                           // "settings.set_overlay" {ring, dot, caption}
+    std::string ring;
+    std::string dot;
+    std::string caption;
+};
 struct SetProvider {                                 // "settings.set_provider" {provider, base_url, model}
     std::string provider;
     std::string base_url;
@@ -62,16 +69,28 @@ struct SetPanel {                                    // "settings.set_panel"   {
     bool hide_on_click_away = true;
     bool pinned = false;
 };
+struct SetCapturePolicy {                            // "settings.set_capture" {exclusions, send_preview}
+    std::vector<std::string> exclusions;
+    bool send_preview = true;
+};
+struct OverlayDebug {                               // "overlay.debug" {action, caption?}
+    std::string action;
+    std::string caption;
+};
 struct WindowHide {};                                // "window.hide"          {}   hide the window that sent it
 struct OpenMain { bool settings = false; };          // "window.open_main"     {settings}
 struct LocalTestModel {                              // "local.test_model"    {endpoint, model}
     std::string endpoint;
     std::string model;
 };
+struct CaptureRequest {                              // "capture.request"     {target, preview}
+    std::string target;                              // "monitor" | "window"
+    bool preview = true;
+};
 
-using UiMessage = std::variant<AppReady, ChatSend, ChatCancel, ChatClear, SetTheme, SetProvider,
+using UiMessage = std::variant<AppReady, ChatSend, ChatCancel, ChatClear, SetTheme, SetOverlayPalette, SetProvider,
                                SetApiKey, ClearApiKey, UiLog, SetHotkey, SetPanel, WindowHide, OpenMain,
-                               LocalTestModel>;
+                               LocalTestModel, SetCapturePolicy, OverlayDebug, CaptureRequest>;
 
 struct ParseResult {
     std::optional<UiMessage> message;
@@ -116,5 +135,7 @@ std::string chat_error(std::string_view request_id, std::string_view code,
 std::string chat_cleared();                                                        // "chat.cleared"
 std::string host_error(std::string_view code, std::string_view message);           // "host.error"
 std::string local_test_result(std::string_view model, bool vision, std::string_view message); // "local.test_result"
+std::string capture_preview(std::string_view media_type, std::string_view base64,
+                            int width, int height); // "capture.preview"
 
 }  // namespace buddy::protocol

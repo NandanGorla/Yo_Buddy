@@ -3,12 +3,16 @@
 #include <mutex>
 #include <utility>
 
+#include <windows.h>
+
 #include "app/tutor_prompt.h"
 #include "core/log.h"
 #include "core/placement.h"
 #include "core/url.h"
 #include "providers/anthropic.h"
 #include "providers/openai_compat.h"
+#include "platform/capture_target.h"
+#include "platform/screen_capture.h"
 
 namespace buddy {
 
@@ -91,7 +95,14 @@ void AppController::send_state() const {
                               {"panel",
                                {{"hide_on_click_away", settings_.hide_on_click_away},
                                 {"pinned", settings_.panel_pinned}}},
-                              {"muted", settings_.muted}}));
+                              {"capture",
+                               {{"exclusions", settings_.capture_exclusions},
+                                {"send_preview", settings_.capture_send_preview}}},
+                              {"muted", settings_.muted},
+                              {"overlay",
+                               {{"ring", settings_.overlay_ring_color},
+                                {"dot", settings_.overlay_dot_color},
+                                {"caption", settings_.overlay_caption_color}}}}));
 }
 
 void AppController::save_settings() const {
@@ -112,6 +123,56 @@ void AppController::handle_ui_message(std::string_view json_text, ViewId source)
 void AppController::on_message(const protocol::AppReady&) {
     send_state();
     send_history();   // a window that has just loaded needs the conversation so far
+}
+
+void AppController::on_message(const protocol::CaptureRequest& request) {
+    const settings::ProviderConfig* provider = settings_.find(settings_.provider);
+    if (!provider) {
+        send(protocol::host_error("capture_failed", "The active provider is not configured."));
+        return;
+    }
+    const url::BaseUrlResult endpoint = url::parse_base_url(provider->base_url);
+    if (!endpoint.ok()) {
+        send(protocol::host_error("capture_failed", endpoint.error));
+        return;
+    }
+    if (capture::requires_preview(url::is_loopback_host(endpoint.url->host),
+                                  settings_.capture_send_preview) &&
+        !request.preview) {
+        send(protocol::host_error("capture_preview_required",
+                                  "Preview is required before sending a capture to a remote endpoint."));
+        return;
+    }
+
+    const capture::TargetResult target =
+        capture::resolve_foreground_target(request.target == "monitor");
+    if (!target.ok()) {
+        send(protocol::host_error("capture_failed", target.error));
+        return;
+    }
+    const HWND identity_window = target.window ? target.window : GetForegroundWindow();
+    const capture::WindowIdentityResult identity = capture::identify_window(identity_window);
+    if (!identity.ok()) {
+        send(protocol::host_error("capture_failed", identity.error));
+        return;
+    }
+    if (capture::is_excluded(*identity.identity, settings_.capture_exclusions)) {
+        send(protocol::host_error("capture_excluded", "The selected window is excluded from capture."));
+        return;
+    }
+
+    const capture::FrameResult frame = capture::capture_one(target);
+    if (!frame.ok()) {
+        send(protocol::host_error("capture_failed", frame.error));
+        return;
+    }
+    const capture::EncodedFrameResult encoded = capture::encode_png(frame.frame);
+    if (!encoded.ok()) {
+        send(protocol::host_error("capture_failed", encoded.error));
+        return;
+    }
+    pending_capture_ = ImageInput{"image/png", encoded.base64};
+    send(protocol::capture_preview("image/png", encoded.base64, frame.frame.width, frame.frame.height));
 }
 
 void AppController::send_history() const {
@@ -190,6 +251,22 @@ void AppController::on_message(const protocol::SetPanel& m) {
     send_state();
 }
 
+void AppController::on_message(const protocol::SetCapturePolicy& m) {
+    settings_.capture_exclusions = m.exclusions;
+    settings_.capture_send_preview = m.send_preview;
+    save_settings();
+    send_state();
+}
+
+void AppController::on_message(const protocol::OverlayDebug& m) {
+    log::info("overlay.debug received action=" + m.action);
+    if (!deps_.overlay_debug) {
+        log::warn("overlay.debug ignored: overlay callback is not installed");
+        return;
+    }
+    deps_.overlay_debug(m);
+}
+
 void AppController::on_message(const protocol::WindowHide&) {
     if (deps_.hide_window) deps_.hide_window(current_source_);
 }
@@ -241,7 +318,16 @@ void AppController::on_message(const protocol::SetTheme& m) {
         send(protocol::host_error("unknown_theme", "That theme is not installed."));
         return;
     }
+
     settings_.theme = chosen.id;
+    save_settings();
+    send_state();
+}
+
+void AppController::on_message(const protocol::SetOverlayPalette& m) {
+    settings_.overlay_ring_color = m.ring;
+    settings_.overlay_dot_color = m.dot;
+    settings_.overlay_caption_color = m.caption;
     save_settings();
     send_state();
 }
@@ -350,11 +436,17 @@ void AppController::on_message(const protocol::ChatSend& m) {
     ChatOptions options;
     options.model = provider.model;
     options.max_output_tokens = provider.max_output_tokens;
+    std::vector<ImageInput> images;
+    if (pending_capture_) {
+        images.push_back(std::move(*pending_capture_));
+        pending_capture_.reset();
+    }
 
     if (worker_.joinable()) worker_.join();   // the previous worker has finished; reclaim it
     worker_ = std::jthread(
         [this, alive = alive_, transport = deps_.transport, run_on_ui = deps_.run_on_ui,
          provider_id = provider.id, base_url = endpoint.url->to_string(), api_key = std::move(api_key), messages = std::move(messages),
+         images = std::move(images),
          options, request_id = m.request_id](std::stop_token stop) {
             auto buffer = std::make_shared<DeltaBuffer>();
 
@@ -382,7 +474,7 @@ void AppController::on_message(const protocol::ChatSend& m) {
                 provider_client = std::make_unique<OpenAiCompatProvider>(
                     *transport, OpenAiCompatConfig{base_url, api_key});
             }
-            ChatResult result = provider_client->chat(messages, {}, {}, options, sink, stop);
+            ChatResult result = provider_client->chat(messages, images, {}, options, sink, stop);
 
             run_on_ui([this, alive, buffer, request_id, result = std::move(result)] {
                 if (!alive->load()) return;

@@ -16,6 +16,7 @@
 
 #include "app/app_controller.h"
 #include "app/main_window.h"
+#include "app/overlay_window.h"
 #include "app/panel_window.h"
 #include "app/win_util.h"
 #include "core/hotkey.h"
@@ -116,6 +117,25 @@ public:
             }
         };
         deps.open_main = [this](bool settings) { open_main(settings); };
+        deps.overlay_debug = [this](const protocol::OverlayDebug& command) {
+            if (!overlay_) {
+                log::warn("overlay.debug ignored: overlay window is not constructed");
+                return;
+            }
+            log::info("overlay.debug dispatch action=" + command.action);
+            if (command.action == "clear") {
+                overlay_->clear();
+            } else if (command.action == "indicator") {
+                overlay_->set_indicator(true);
+            } else if (command.action == "caption") {
+                overlay_->set_caption(win::widen(command.caption));
+            } else if (command.action == "demo") {
+                overlay_->set_indicator(true);
+                overlay_->set_commands({overlay::Arrow{180, 180, 360, 280},
+                                        overlay::Highlight{400, 180, 260, 120},
+                                        overlay::Pulse{530, 240, 24, 1200}});
+            }
+        };
         controller_ = std::make_unique<AppController>(std::move(deps));
 
         WindowServices services;
@@ -129,12 +149,22 @@ public:
         services.on_ui_message = [this](const std::string& json, ViewId source) {
             if (!controller_) return;
             controller_->handle_ui_message(json, source);
+            if (overlay_) {
+                const auto& overlay = controller_->settings();
+                overlay_->set_palette(overlay.overlay_ring_color, overlay.overlay_dot_color,
+                                      overlay.overlay_caption_color);
+            }
             sync_shell();   // the message may have changed the theme, the panel options or mute
         };
         services.theme = [this]() -> const theme::Theme& { return controller_->active_theme(); };
 
         main_ = std::make_unique<MainWindow>(services);
         panel_ = std::make_unique<PanelWindow>(services);
+        overlay_ = std::make_unique<OverlayWindow>(instance_, controller_->active_theme());
+        if (!overlay_->create()) log::warn("could not create the overlay window");
+        const auto& overlay_settings = controller_->settings();
+        overlay_->set_palette(overlay_settings.overlay_ring_color, overlay_settings.overlay_dot_color,
+                              overlay_settings.overlay_caption_color);
         panel_->on_resized([this](placement::Size size) { controller_->set_panel_size(size.width, size.height); });
         if (!panel_->create()) log::error("could not create the floating panel");
 
@@ -294,6 +324,7 @@ private:
         remove_tray_icon();
         panel_.reset();
         main_.reset();
+        overlay_.reset();
         dispatcher_->attach(nullptr);
         PostQuitMessage(0);
     }
@@ -376,6 +407,7 @@ private:
     std::unique_ptr<AppController> controller_;
     std::unique_ptr<MainWindow> main_;
     std::unique_ptr<PanelWindow> panel_;
+    std::unique_ptr<OverlayWindow> overlay_;
 };
 
 // Debug builds only: BUDDY_PROFILE=<name> gives the run its own data folder, Credential Manager

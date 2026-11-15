@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -47,6 +48,7 @@ public:
         hotkey::IRegistrar* hotkeys = nullptr;                // registers the global hotkey
         std::function<void(ViewId)> hide_window;              // hide the window a message came from
         std::function<void(bool show_settings)> open_main;    // bring up the main window
+        std::function<void(const protocol::OverlayDebug&)> overlay_debug;
     };
 
     explicit AppController(Deps deps);
@@ -94,15 +96,19 @@ private:
     void on_message(const protocol::ChatCancel&);
     void on_message(const protocol::ChatClear&);
     void on_message(const protocol::SetTheme&);
+    void on_message(const protocol::SetOverlayPalette&);
     void on_message(const protocol::SetProvider&);
     void on_message(const protocol::SetApiKey&);
     void on_message(const protocol::ClearApiKey&);
     void on_message(const protocol::UiLog&);
     void on_message(const protocol::SetHotkey&);
     void on_message(const protocol::SetPanel&);
+    void on_message(const protocol::SetCapturePolicy&);
+    void on_message(const protocol::OverlayDebug&);
     void on_message(const protocol::WindowHide&);
     void on_message(const protocol::OpenMain&);
     void on_message(const protocol::LocalTestModel&);
+    void on_message(const protocol::CaptureRequest&);
 
     void send_history() const;
 
@@ -118,6 +124,7 @@ private:
     std::string active_request_;
     std::string reply_so_far_;
     std::string active_model_;
+    std::optional<ImageInput> pending_capture_;
     bool busy_ = false;
     bool first_run_ = false;
     ViewId current_source_ = ViewId::Main;   // the window whose message is being handled

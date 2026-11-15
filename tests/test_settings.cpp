@@ -117,6 +117,30 @@ TEST_CASE("settings: companion shell options round-trip", "[settings]") {
     CHECK(back.muted);
 }
 
+TEST_CASE("settings: capture policy defaults and round-trip", "[settings]") {
+    const Settings d = defaults();
+    CHECK(d.capture_send_preview);
+    CHECK(d.capture_exclusions.size() == 5);
+
+    Settings s = d;
+    s.capture_send_preview = false;
+    s.capture_exclusions = {"My Password App", "Private Window"};
+    const Settings back = from_json(to_json(s));
+    CHECK_FALSE(back.capture_send_preview);
+    CHECK(back.capture_exclusions == s.capture_exclusions);
+}
+
+TEST_CASE("settings: unsafe capture exclusions are rejected", "[settings]") {
+    std::vector<std::string> warnings;
+    const json damaged = {
+        {"capture", {{"exclusions", {"ok", 7}}, {"send_preview", "no"}}},
+    };
+    const Settings s = from_json(damaged.dump(), &warnings);
+    CHECK(s.capture_exclusions == defaults().capture_exclusions);
+    CHECK(s.capture_send_preview);
+    CHECK(warnings.size() == 2);
+}
+
 TEST_CASE("settings: bad shell options fall back or are clamped", "[settings]") {
     std::vector<std::string> warnings;
     const json damaged = {

@@ -186,10 +186,20 @@ TEST_CASE("protocol: companion shell messages parse", "[protocol]") {
     const auto panel = expect<SetPanel>(envelope("settings.set_panel", {{"hide_on_click_away", false}, {"pinned", true}}));
     CHECK_FALSE(panel.hide_on_click_away);
     CHECK(panel.pinned);
+    const auto capture_policy =
+        expect<SetCapturePolicy>(envelope("settings.set_capture",
+                                           {{"exclusions", {"private", "Vault"}}, {"send_preview", false}}));
+    CHECK(capture_policy.exclusions == std::vector<std::string>{"private", "Vault"});
+    CHECK_FALSE(capture_policy.send_preview);
 
     expect<WindowHide>(envelope("window.hide", json::object()));
     CHECK(expect<OpenMain>(envelope("window.open_main", {{"settings", true}})).settings);
     CHECK_FALSE(expect<OpenMain>(envelope("window.open_main", {{"settings", false}})).settings);
+    const auto capture = expect<CaptureRequest>(envelope("capture.request", {{"target", "monitor"}, {"preview", true}}));
+    CHECK(capture.target == "monitor");
+    CHECK(capture.preview);
+    CHECK(expect<OverlayDebug>(envelope("overlay.debug", {{"action", "caption"}, {"caption", "Hello"}})).caption ==
+          "Hello");
 }
 
 TEST_CASE("protocol: companion shell messages are validated", "[protocol]") {
@@ -201,10 +211,18 @@ TEST_CASE("protocol: companion shell messages are validated", "[protocol]") {
     CHECK(error_of(envelope("settings.set_panel", {{"hide_on_click_away", "yes"}, {"pinned", true}})) == "invalid_payload");
     CHECK(error_of(envelope("settings.set_panel", {{"hide_on_click_away", true}, {"pinned", 1}})) == "invalid_payload");
     CHECK(error_of(envelope("settings.set_panel", {{"pinned", true}})) == "invalid_payload");
+    CHECK(error_of(envelope("settings.set_capture", {{"exclusions", {"ok"}}, {"send_preview", "yes"}})) ==
+          "invalid_payload");
+    CHECK(error_of(envelope("settings.set_capture", {{"exclusions", {std::string(129, 'x')}},
+                                                       {"send_preview", true}})) == "invalid_payload");
 
     CHECK(error_of(envelope("window.hide", {{"which", "all"}})) == "invalid_payload");
     CHECK(error_of(envelope("window.open_main", json::object())) == "invalid_payload");
     CHECK(error_of(envelope("window.open_main", {{"settings", "true"}})) == "invalid_payload");
+    CHECK(error_of(envelope("capture.request", {{"target", "desktop"}, {"preview", true}})) == "invalid_payload");
+    CHECK(error_of(envelope("capture.request", {{"target", "monitor"}, {"preview", 1}})) == "invalid_payload");
+    CHECK(error_of(envelope("capture.request", {{"target", "monitor"}})) == "invalid_payload");
+    CHECK(error_of(envelope("overlay.debug", {{"action", "unknown"}, {"caption", ""}})) == "invalid_payload");
 }
 
 TEST_CASE("protocol: history and UI command messages", "[protocol]") {

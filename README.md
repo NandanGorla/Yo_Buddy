@@ -63,7 +63,8 @@ Known gaps, stated plainly:
   resizing the panel with the mouse, were not covered by the automated checks.
 
 [STATUS.md](STATUS.md) has the full record: decisions, what was tested and how, and the list of
-untested paths. [PROJECT.md](PROJECT.md) is the design brief.
+untested paths. [TESTING.md](TESTING.md) is the consolidated end-to-end checklist for final
+owner testing. [PROJECT.md](PROJECT.md) is the design brief.
 
 ## Build from a clean machine
 

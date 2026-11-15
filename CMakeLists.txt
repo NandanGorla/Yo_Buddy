@@ -22,7 +22,9 @@ find_package(unofficial-webview2 CONFIG REQUIRED)
 add_library(buddy_core STATIC
   src/core/hotkey.cpp
   src/core/log.cpp
+  src/core/overlay_commands.cpp
   src/core/placement.cpp
+  src/core/capture_policy.cpp
   src/core/protocol.cpp
   src/core/settings.cpp
   src/core/text.cpp
@@ -44,10 +46,12 @@ target_link_libraries(buddy_providers PUBLIC buddy_core)
 # --- platform: WinHTTP transport, Credential Manager, known folders. ---
 add_library(buddy_platform STATIC
   src/platform/credential_store.cpp
+  src/platform/capture_target.cpp
   src/platform/paths.cpp
+  src/platform/screen_capture.cpp
   src/platform/winhttp_transport.cpp
 )
-target_link_libraries(buddy_platform PUBLIC buddy_providers PRIVATE winhttp advapi32 shell32 ole32)
+target_link_libraries(buddy_platform PUBLIC buddy_providers d3d11 dxgi windowsapp windowscodecs PRIVATE winhttp advapi32 shell32 ole32)
 
 # --- app logic: the controller behind the UI bridge. No window code, so tests can drive it. ---
 add_library(buddy_app_logic STATIC
@@ -66,12 +70,13 @@ target_link_libraries(buddy_webhost PRIVATE unofficial::webview2::webview2 WIL::
 add_executable(buddy WIN32
   src/app/main.cpp
   src/app/main_window.cpp
+  src/app/overlay_window.cpp
   src/app/panel_window.cpp
   src/app/win_util.cpp
   src/app/app.manifest
 )
 target_compile_definitions(buddy PRIVATE BUDDY_VERSION="${PROJECT_VERSION}")
-target_link_libraries(buddy PRIVATE buddy_app_logic buddy_platform buddy_webhost dwmapi shcore shell32)
+target_link_libraries(buddy PRIVATE buddy_app_logic buddy_platform buddy_webhost d2d1 dwrite d3d11 dxgi windowsapp dwmapi shcore shell32)
 
 # The web UI and the themes ship as folders next to the exe (virtual host mapping serves a folder).
 add_custom_command(TARGET buddy POST_BUILD
@@ -96,11 +101,15 @@ if(BUDDY_BUILD_TESTS)
   add_executable(buddy_tests
     tests/fake_transport.h
     tests/test_app_controller.cpp
+    tests/test_capture_policy.cpp
+    tests/test_capture_target.cpp
+    tests/test_screen_capture.cpp
     tests/test_anthropic.cpp
     tests/test_credential_store.cpp
     tests/test_hotkey.cpp
     tests/test_local_endpoint.cpp
     tests/test_openai_compat.cpp
+    tests/test_overlay_commands.cpp
     tests/test_placement.cpp
     tests/test_protocol.cpp
     tests/test_settings.cpp

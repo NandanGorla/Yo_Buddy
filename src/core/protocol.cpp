@@ -3,6 +3,7 @@
 #include <initializer_list>
 
 #include "core/text.h"
+#include "core/theme.h"
 
 namespace buddy::protocol {
 namespace {
@@ -77,6 +78,17 @@ ParseResult parse_payload(const std::string& type, const json& p) {
         if (!theme || !is_valid_id(*theme)) return bad_payload(type, "theme is not a valid id");
         return ok(SetTheme{*theme});
     }
+    if (type == "settings.set_overlay") {
+        if (!has_exactly(p, {"ring", "dot", "caption"})) return bad_payload(type, "expected ring, dot and caption");
+        const auto* ring = string_field(p, "ring");
+        const auto* dot = string_field(p, "dot");
+        const auto* caption = string_field(p, "caption");
+        if (!ring || !dot || !caption || !theme::is_valid_color(*ring) || !theme::is_valid_color(*dot) ||
+            !theme::is_valid_color(*caption)) {
+            return bad_payload(type, "overlay colors must be valid hex colors");
+        }
+        return ok(SetOverlayPalette{*ring, *dot, *caption});
+    }
     if (type == "settings.set_provider") {
         if (!has_exactly(p, {"provider", "base_url", "model"})) {
             return bad_payload(type, "expected provider, base_url and model");
@@ -134,6 +146,36 @@ ParseResult parse_payload(const std::string& type, const json& p) {
         }
         return ok(SetPanel{p["hide_on_click_away"].get<bool>(), p["pinned"].get<bool>()});
     }
+    if (type == "settings.set_capture") {
+        if (!has_exactly(p, {"exclusions", "send_preview"})) {
+            return bad_payload(type, "expected exclusions and send_preview");
+        }
+        if (!p["exclusions"].is_array() || p["exclusions"].size() > kMaxCaptureExclusions ||
+            !p["send_preview"].is_boolean()) {
+            return bad_payload(type, "invalid capture policy");
+        }
+        std::vector<std::string> exclusions;
+        exclusions.reserve(p["exclusions"].size());
+        for (const auto& value : p["exclusions"]) {
+            if (!value.is_string() || value.get<std::string>().empty() ||
+                value.get<std::string>().size() > kMaxCaptureExclusionLength) {
+                return bad_payload(type, "capture exclusions must be bounded strings");
+            }
+            exclusions.push_back(value.get<std::string>());
+        }
+        return ok(SetCapturePolicy{std::move(exclusions), p["send_preview"].get<bool>()});
+    }
+    if (type == "overlay.debug") {
+        if (!has_exactly(p, {"action", "caption"})) return bad_payload(type, "expected action and caption");
+        const auto* action = string_field(p, "action");
+        const auto* caption = string_field(p, "caption");
+        if (!action || (*action != "demo" && *action != "clear" && *action != "indicator" &&
+                        *action != "caption") ||
+            !caption || caption->size() > 512) {
+            return bad_payload(type, "invalid overlay debug command");
+        }
+        return ok(OverlayDebug{*action, *caption});
+    }
     if (type == "window.hide") {
         if (!has_exactly(p, {})) return bad_payload(type, "expected an empty payload");
         return ok(WindowHide{});
@@ -155,6 +197,15 @@ ParseResult parse_payload(const std::string& type, const json& p) {
             return bad_payload(type, "model is invalid");
         }
         return ok(LocalTestModel{*endpoint, *model});
+    }
+    if (type == "capture.request") {
+        if (!has_exactly(p, {"target", "preview"})) return bad_payload(type, "expected target and preview");
+        const auto* target = string_field(p, "target");
+        if (!target || (*target != "monitor" && *target != "window")) {
+            return bad_payload(type, "target must be monitor or window");
+        }
+        if (!p["preview"].is_boolean()) return bad_payload(type, "preview must be a boolean");
+        return ok(CaptureRequest{*target, p["preview"].get<bool>()});
     }
     return fail("unknown_type", "unknown message type");
 }
@@ -266,6 +317,11 @@ std::string host_error(std::string_view code, std::string_view message) {
 
 std::string local_test_result(std::string_view model, bool vision, std::string_view message) {
     return make_message("local.test_result", {{"model", model}, {"vision", vision}, {"message", message}});
+}
+
+std::string capture_preview(std::string_view media_type, std::string_view base64, int width, int height) {
+    return make_message("capture.preview",
+                        {{"media_type", media_type}, {"base64", base64}, {"width", width}, {"height", height}});
 }
 
 }  // namespace buddy::protocol

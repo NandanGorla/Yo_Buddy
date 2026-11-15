@@ -110,6 +110,49 @@
       </label>
       <p class="hint">Esc always hides the panel and returns to the app you were in.</p>
 
+      <h3>Appearance</h3>
+      <label class="field">
+        <span>Ring color</span>
+        <input type="color" id="overlay-ring-color" value="#ffb000">
+      </label>
+      <label class="field">
+        <span>Dot color</span>
+        <input type="color" id="overlay-dot-color" value="#ffffff">
+      </label>
+      <label class="field">
+        <span>Caption text color</span>
+        <input type="color" id="overlay-caption-color" value="#ffffff">
+      </label>
+      <button type="button" class="btn btn-primary" id="save-overlay-colors-button">Save overlay colors</button>
+
+      <h3>Capture privacy</h3>
+      <label class="field">
+        <span>Excluded app or window names (one per line)</span>
+        <textarea id="capture-exclusions" rows="4" maxlength="8192"
+                  placeholder="1Password&#10;Windows Security"></textarea>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="capture-preview-checkbox">
+        <span>Require preview before sending captures to cloud providers</span>
+      </label>
+      <div class="row">
+        <button type="button" class="btn btn-primary" id="save-capture-button">Save capture privacy</button>
+      </div>
+      <p class="hint">Capture is always explicit. Exclusions match window titles and process names.</p>
+
+      <h3>Overlay diagnostics</h3>
+      <div class="row">
+        <button type="button" class="btn" id="overlay-demo-button">Draw demo</button>
+        <button type="button" class="btn" id="overlay-indicator-button">Show Buddy</button>
+        <button type="button" class="btn" id="overlay-clear-button">Clear</button>
+      </div>
+      <label class="field">
+        <span>Caption</span>
+        <input type="text" id="overlay-caption-input" maxlength="512">
+      </label>
+      <button type="button" class="btn" id="overlay-caption-button">Show caption</button>
+      <p class="hint">The ring, dot, and caption colors follow the selected theme palette.</p>
+
       <p class="hint" id="version-line"></p>
     </aside>
   </main>
