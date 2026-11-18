@@ -529,7 +529,7 @@ TEST_CASE("controller: the stored hotkey is registered and reported in the state
     h.ui("app.ready");
     const json state = h.of_type("app.state")[0];
     CHECK(state["hotkey"] == json{{"requested", "Alt+Shift+Space"}, {"active", "Alt+Shift+Space"}, {"status", "active"}, {"message", ""}});
-    CHECK(state["panel"] == json{{"hide_on_click_away", true}, {"pinned", false}});
+    CHECK(state["panel"] == json{{"hide_on_click_away", true}, {"pinned", false}, {"captions_first", true}});
     CHECK(state["muted"] == false);
 }
 
@@ -591,8 +591,9 @@ TEST_CASE("controller: shutdown releases the hotkey", "[controller][shell]") {
 
 TEST_CASE("controller: panel options, pin, mute and size are saved", "[controller][shell]") {
     Harness h("panel-options");
-    h.ui("settings.set_panel", {{"hide_on_click_away", false}, {"pinned", true}}, ViewId::Panel);
-    CHECK(h.of_type("app.state").back()["panel"] == json{{"hide_on_click_away", false}, {"pinned", true}});
+    h.ui("settings.set_panel", {{"hide_on_click_away", false}, {"pinned", true}, {"captions_first", false}}, ViewId::Panel);
+    CHECK(h.of_type("app.state").back()["panel"] ==
+          json{{"hide_on_click_away", false}, {"pinned", true}, {"captions_first", false}});
 
     h.controller->set_muted(true);
     CHECK(h.of_type("app.state").back()["muted"] == true);
@@ -604,6 +605,7 @@ TEST_CASE("controller: panel options, pin, mute and size are saved", "[controlle
     const auto& s = h.controller->settings();
     CHECK_FALSE(s.hide_on_click_away);
     CHECK_FALSE(s.panel_pinned);
+    CHECK_FALSE(s.captions_first);
     CHECK(s.muted);
     CHECK(s.panel_width == 700);
     CHECK(s.panel_height == 240);
@@ -801,6 +803,43 @@ TEST_CASE("controller: a code reply is spoken but not captioned", "[controller][
     REQUIRE(h.wait_for_reply());
     CHECK(h.spoken == std::vector<std::string>{"Sure."});
     CHECK(h.captions.empty());
+}
+
+TEST_CASE("controller: captions-first hides short panel replies and offers expansion for complex ones",
+          "[controller][m4]") {
+    SECTION("short plain text becomes a caption and hides the panel") {
+        Harness h("captions-first-short");
+        h.credentials.entries["apikey/anthropic"] = "k";
+        script_reply(h.transport, {"Click File, then New."});
+        h.ui("chat.send", {{"request_id", "r1"}, {"text", "how do I start?"}}, ViewId::Panel);
+        REQUIRE(h.wait_for_reply());
+        CHECK(h.captions == std::vector<std::string>{"Click File, then New."});
+        CHECK(h.hidden == std::vector<ViewId>{ViewId::Panel});
+        CHECK(h.of_type("chat.done").back()["expand_available"] == false);
+    }
+
+    SECTION("code stays in the panel and has an expand action") {
+        Harness h("captions-first-code");
+        h.credentials.entries["apikey/anthropic"] = "k";
+        script_reply(h.transport, {"```cpp\nint answer = 42;\n```"});
+        h.ui("chat.send", {{"request_id", "r1"}, {"text", "show code"}}, ViewId::Panel);
+        REQUIRE(h.wait_for_reply());
+        CHECK(h.captions.empty());
+        CHECK(h.hidden.empty());
+        CHECK(h.of_type("chat.done").back()["expand_available"] == true);
+    }
+}
+
+TEST_CASE("controller: always-in-panel disables short reply captions and auto-hide", "[controller][m4]") {
+    Harness h("always-panel");
+    h.credentials.entries["apikey/anthropic"] = "k";
+    h.ui("settings.set_panel", {{"hide_on_click_away", true}, {"pinned", false}, {"captions_first", false}});
+    script_reply(h.transport, {"A short answer."});
+    h.ui("chat.send", {{"request_id", "r1"}, {"text", "question"}}, ViewId::Panel);
+    REQUIRE(h.wait_for_reply());
+    CHECK(h.captions.empty());
+    CHECK(h.hidden.empty());
+    CHECK(h.of_type("chat.done").back()["expand_available"] == false);
 }
 
 TEST_CASE("controller: overlay debug captions are read aloud unless muted", "[controller][voice]") {

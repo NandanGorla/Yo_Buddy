@@ -5,14 +5,15 @@
   <!--
     Content Security Policy. The UI makes no network requests at all: every model call is made
     by the C++ host. Scripts, styles, images and fonts load only from this bundled origin, and
-    nothing may be fetched, framed, embedded or submitted anywhere.
+    nothing may be fetched, framed or submitted anywhere. A reviewed local capture is displayed
+    from an in-memory data URL only; it is not fetched from or uploaded to an image host.
 
     "require-trusted-types-for" makes the browser refuse plain strings at DOM injection points
     such as innerHTML. The only policy allowed is DOMPurify's, which it uses internally while
     sanitising model output.
   -->
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types dompurify">
+        content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; require-trusted-types-for 'script'; trusted-types dompurify">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Buddy</title>
   <link rel="stylesheet" href="css/app.css">
@@ -51,9 +52,20 @@
       <form class="composer" id="composer">
         <textarea id="composer-input" rows="2" placeholder="Message Buddy. Enter sends, Shift+Enter adds a line."
                   aria-label="Message" maxlength="100000"></textarea>
+        <div class="capture-controls">
+          <select id="capture-target-select" aria-label="Screenshot target">
+            <option value="monitor">Screen</option>
+            <option value="window">Window</option>
+          </select>
+          <button type="button" class="btn" id="capture-button" title="Capture and review a screenshot">Capture</button>
+        </div>
         <button type="submit" class="btn btn-primary" id="send-button">Send</button>
         <button type="button" class="btn" id="stop-button" hidden>Stop</button>
       </form>
+      <div class="capture-ready" id="capture-ready" role="status" hidden>
+        <span>Screenshot approved; it will attach to your next message.</span>
+        <button type="button" class="btn" id="remove-capture-button">Remove</button>
+      </div>
     </section>
 
     <aside class="settings main-only" id="settings-panel" aria-label="Settings" hidden>
@@ -148,6 +160,10 @@
         <input type="checkbox" id="pinned-checkbox">
         <span>Keep the panel pinned open</span>
       </label>
+      <label class="check">
+        <input type="checkbox" id="captions-first-checkbox">
+        <span>Captions first: hide the panel for short replies (off keeps replies in the panel)</span>
+      </label>
       <p class="hint">Esc always hides the panel and returns to the app you were in.</p>
 
       <h3>Appearance</h3>
@@ -196,5 +212,16 @@
       <p class="hint" id="version-line"></p>
     </aside>
   </main>
+  <dialog class="capture-dialog" id="capture-dialog" aria-labelledby="capture-dialog-title">
+    <h2 id="capture-dialog-title">Review screenshot</h2>
+    <p class="hint" id="capture-preview-dimensions"></p>
+    <p class="hint" id="capture-preview-destination"></p>
+    <img id="capture-preview-image" alt="Screenshot preview; it has not been sent">
+    <p class="hint">This image stays on this device until you send your next message. Review it, then approve or discard it.</p>
+    <div class="row">
+      <button type="button" class="btn" id="discard-capture-button">Discard</button>
+      <button type="button" class="btn btn-primary" id="approve-capture-button">Use with next message</button>
+    </div>
+  </dialog>
 </body>
 </html>

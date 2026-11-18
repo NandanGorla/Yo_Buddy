@@ -3,6 +3,7 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <dwmapi.h>
 #include <type_traits>
@@ -11,6 +12,7 @@
 
 #include "app/win_util.h"
 #include "core/log.h"
+#include "platform/win_text.h"
 
 namespace buddy {
 namespace {
@@ -27,6 +29,32 @@ constexpr ULONGLONG kCaptionExpandDurationMs = 350;
 template <typename T>
 T* as(void* value) {
     return static_cast<T*>(value);
+}
+
+void draw_arrow(ID2D1HwndRenderTarget* target, ID2D1Factory* factory, ID2D1Brush* brush,
+                D2D1_POINT_2F start, D2D1_POINT_2F end) {
+    target->DrawLine(start, end, brush, 3.0f);
+    const float dx = end.x - start.x;
+    const float dy = end.y - start.y;
+    const float length = std::sqrt(dx * dx + dy * dy);
+    if (length < 1.0f) return;
+
+    const float ux = dx / length;
+    const float uy = dy / length;
+    const float head = std::min(18.0f, length * 0.4f);
+    const float half = head * 0.42f;
+    const D2D1_POINT_2F base{end.x - ux * head, end.y - uy * head};
+    const D2D1_POINT_2F left{base.x - uy * half, base.y + ux * half};
+    const D2D1_POINT_2F right{base.x + uy * half, base.y - ux * half};
+
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink))) return;
+    sink->BeginFigure(end, D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(left);
+    sink->AddLine(right);
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    if (SUCCEEDED(sink->Close())) target->FillGeometry(geometry.Get(), brush);
 }
 
 }  // namespace
@@ -62,8 +90,10 @@ bool OverlayWindow::create() {
         return false;
     }
     SetLayeredWindowAttributes(hwnd_, kTransparentKey, 0, LWA_COLORKEY);
-    SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE);
-    SetTimer(hwnd_, kAnimationTimer, kAnimationIntervalMs, nullptr);
+    if (!SetWindowDisplayAffinity(hwnd_, WDA_EXCLUDEFROMCAPTURE)) {
+        log::warn("overlay: SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE) failed with error " +
+                  std::to_string(GetLastError()));
+    }
     const bool ready = create_device();
     log::info(std::string("overlay: created hwnd=") +
               std::to_string(reinterpret_cast<std::uintptr_t>(hwnd_)) +
@@ -143,11 +173,12 @@ void OverlayWindow::paint() {
     const ULONGLONG now = GetTickCount64();
     for (const auto& command : commands_) {
         std::visit(
-            [target, brush, now, text_format = text_format_](const auto& item) {
+            [target, brush, now, text_format = text_format_, factory = factory_](const auto& item) {
                 using T = std::decay_t<decltype(item)>;
                 if constexpr (std::is_same_v<T, overlay::Arrow>) {
-                    target->DrawLine(D2D1::Point2F(static_cast<float>(item.x1), static_cast<float>(item.y1)),
-                                     D2D1::Point2F(static_cast<float>(item.x2), static_cast<float>(item.y2)), brush, 3.0f);
+                    draw_arrow(target, as<ID2D1Factory>(factory), brush,
+                               D2D1::Point2F(static_cast<float>(item.x1), static_cast<float>(item.y1)),
+                               D2D1::Point2F(static_cast<float>(item.x2), static_cast<float>(item.y2)));
                 } else if constexpr (std::is_same_v<T, overlay::Circle>) {
                     target->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(static_cast<float>(item.x), static_cast<float>(item.y)),
                                                       static_cast<float>(item.radius), static_cast<float>(item.radius)),
@@ -167,7 +198,7 @@ void OverlayWindow::paint() {
                     const auto rect = D2D1::RectF(static_cast<float>(item.x), static_cast<float>(item.y),
                                                   static_cast<float>(item.x + 500), static_cast<float>(item.y + 80));
                     if (text_format) {
-                        const std::wstring text(item.text.begin(), item.text.end());
+                        const std::wstring text = win::widen(item.text);
                         target->DrawTextW(text.c_str(), static_cast<UINT32>(text.size()),
                                           as<IDWriteTextFormat>(text_format), rect, brush);
                     }
@@ -221,8 +252,17 @@ void OverlayWindow::paint() {
 void OverlayWindow::set_commands(std::vector<overlay::Command> commands) {
     commands_ = std::move(commands);
     if (hwnd_) {
-        ShowWindow(hwnd_, commands_.empty() ? SW_HIDE : SW_SHOWNOACTIVATE);
+        if (commands_.empty() && !indicator_enabled_ && GetTickCount64() >= caption_collapse_until_) {
+            caption_.clear();
+        }
+        if (!commands_.empty()) {
+            update_indicator();
+            ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
+        } else if (!indicator_enabled_ && caption_.empty()) {
+            ShowWindow(hwnd_, SW_HIDE);
+        }
         InvalidateRect(hwnd_, nullptr, FALSE);
+        update_animation_timer();
     }
 }
 
@@ -236,6 +276,7 @@ void OverlayWindow::clear() {
     if (hwnd_) {
         ShowWindow(hwnd_, SW_HIDE);
         InvalidateRect(hwnd_, nullptr, FALSE);
+        update_animation_timer();
     }
     log::info("overlay: cleared");
 }
@@ -244,14 +285,25 @@ void OverlayWindow::set_indicator(bool enabled) {
     indicator_enabled_ = enabled;
     log::info(std::string("overlay: indicator ") + (enabled ? "enabled" : "disabled"));
     if (hwnd_) {
+        if (!enabled && GetTickCount64() >= caption_collapse_until_) caption_.clear();
         if (enabled) update_indicator();
         else if (commands_.empty() && caption_.empty()) ShowWindow(hwnd_, SW_HIDE);
         InvalidateRect(hwnd_, nullptr, FALSE);
+        update_animation_timer();
     }
 }
 
 void OverlayWindow::set_caption(std::wstring text, DWORD /*duration_ms*/) {
     caption_ = std::move(text);
+    if (caption_.empty()) {
+        caption_started_ = caption_until_ = caption_collapse_until_ = 0;
+        if (hwnd_) {
+            if (!indicator_enabled_ && commands_.empty()) ShowWindow(hwnd_, SW_HIDE);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            update_animation_timer();
+        }
+        return;
+    }
     caption_started_ = GetTickCount64();
     const DWORD length_duration = 4000 + static_cast<DWORD>(std::min<std::size_t>(caption_.size() * 80, 4000));
     caption_until_ = caption_started_ + std::clamp<DWORD>(length_duration, DWORD{4000}, DWORD{8000});
@@ -260,6 +312,26 @@ void OverlayWindow::set_caption(std::wstring text, DWORD /*duration_ms*/) {
         update_indicator();
         ShowWindow(hwnd_, SW_SHOWNOACTIVATE);
         InvalidateRect(hwnd_, nullptr, FALSE);
+        update_animation_timer();
+    }
+}
+
+bool OverlayWindow::has_pulsing_commands() const {
+    return std::any_of(commands_.begin(), commands_.end(),
+                       [](const overlay::Command& command) { return std::holds_alternative<overlay::Pulse>(command); });
+}
+
+void OverlayWindow::update_animation_timer() {
+    if (!hwnd_) return;
+    const ULONGLONG now = GetTickCount64();
+    const bool caption_animating = !caption_.empty() && now < caption_collapse_until_;
+    const bool needed = indicator_enabled_ || caption_animating || has_pulsing_commands();
+    if (needed && !animation_timer_running_) {
+        animation_timer_running_ = SetTimer(hwnd_, kAnimationTimer, kAnimationIntervalMs, nullptr) != 0;
+        if (!animation_timer_running_) log::warn("overlay: could not start the animation timer");
+    } else if (!needed && animation_timer_running_) {
+        KillTimer(hwnd_, kAnimationTimer);
+        animation_timer_running_ = false;
     }
 }
 
@@ -313,7 +385,8 @@ void OverlayWindow::smooth_indicator() {
 }
 
 void OverlayWindow::destroy() {
-    if (hwnd_) KillTimer(hwnd_, kAnimationTimer);
+    if (hwnd_ && animation_timer_running_) KillTimer(hwnd_, kAnimationTimer);
+    animation_timer_running_ = false;
     if (brush_) as<ID2D1SolidColorBrush>(brush_)->Release();
     if (ring_brush_) as<ID2D1SolidColorBrush>(ring_brush_)->Release();
     if (dot_brush_) as<ID2D1SolidColorBrush>(dot_brush_)->Release();
@@ -351,9 +424,18 @@ LRESULT OverlayWindow::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         case WM_SIZE: resize(); return 0;
         case WM_TIMER:
             if (wparam == kAnimationTimer) {
-                update_indicator();
-                smooth_indicator();
+                const ULONGLONG now = GetTickCount64();
+                const bool caption_animating = !caption_.empty() && now < caption_collapse_until_;
+                if (indicator_enabled_ || caption_animating) {
+                    update_indicator();
+                    smooth_indicator();
+                }
+                if (!caption_animating && !indicator_enabled_) {
+                    caption_.clear();
+                    if (commands_.empty()) ShowWindow(hwnd_, SW_HIDE);
+                }
                 InvalidateRect(hwnd_, nullptr, FALSE);
+                update_animation_timer();
             }
             return 0;
         case WM_NCHITTEST: return HTTRANSPARENT;

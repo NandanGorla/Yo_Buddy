@@ -99,6 +99,7 @@ TEST_CASE("settings: companion shell options round-trip", "[settings]") {
     CHECK(d.panel_height == 560);
     CHECK(d.hide_on_click_away);
     CHECK_FALSE(d.panel_pinned);
+    CHECK(d.captions_first);
     CHECK_FALSE(d.muted);
 
     Settings s = defaults();
@@ -107,6 +108,7 @@ TEST_CASE("settings: companion shell options round-trip", "[settings]") {
     s.panel_height = 700;
     s.hide_on_click_away = false;
     s.panel_pinned = true;
+    s.captions_first = false;
     s.muted = true;
     const Settings back = from_json(to_json(s));
     CHECK(back.hotkey == "Ctrl+Alt+B");
@@ -114,6 +116,7 @@ TEST_CASE("settings: companion shell options round-trip", "[settings]") {
     CHECK(back.panel_height == 700);
     CHECK_FALSE(back.hide_on_click_away);
     CHECK(back.panel_pinned);
+    CHECK_FALSE(back.captions_first);
     CHECK(back.muted);
 }
 
@@ -145,7 +148,8 @@ TEST_CASE("settings: bad shell options fall back or are clamped", "[settings]") 
     std::vector<std::string> warnings;
     const json damaged = {
         {"hotkey", "Win+Q"},
-        {"panel", {{"width", 5}, {"height", 999999}, {"hide_on_click_away", "yes"}, {"pinned", 1}}},
+        {"panel", {{"width", 5}, {"height", 999999}, {"hide_on_click_away", "yes"}, {"pinned", 1},
+                   {"captions_first", "yes"}}},
         {"muted", "no"},
     };
     const Settings s = from_json(damaged.dump(), &warnings);
@@ -154,6 +158,7 @@ TEST_CASE("settings: bad shell options fall back or are clamped", "[settings]") 
     CHECK(s.panel_height == 1400);          // clamped to the maximum
     CHECK(s.hide_on_click_away);            // wrong type: default kept
     CHECK_FALSE(s.panel_pinned);
+    CHECK(s.captions_first);
     CHECK_FALSE(s.muted);
     CHECK(warnings.size() == 1);
 

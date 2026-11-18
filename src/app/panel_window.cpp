@@ -9,6 +9,7 @@
 #include "app/win_util.h"
 #include "core/log.h"
 #include "core/protocol.h"
+#include "platform/capture_target.h"
 
 namespace buddy {
 namespace {
@@ -45,6 +46,15 @@ PanelWindow::~PanelWindow() { destroy(); }
 
 void PanelWindow::post(const std::string& json) {
     if (hwnd_) webview_.post_json(json);
+}
+
+HWND PanelWindow::capture_target_window() const {
+    if (previous_foreground_ && IsWindow(previous_foreground_)) {
+        const HWND root = GetAncestor(previous_foreground_, GA_ROOT);
+        const HWND candidate = root ? root : previous_foreground_;
+        if (!capture::is_buddy_window(candidate)) return candidate;
+    }
+    return GetForegroundWindow();
 }
 
 bool PanelWindow::create() {
@@ -160,7 +170,11 @@ void PanelWindow::show_at_cursor() {
 
     // Remember who had the keyboard, so it can be handed back on hide.
     const HWND foreground = GetForegroundWindow();
-    if (foreground && foreground != hwnd_ && !belongs_to_panel(foreground)) previous_foreground_ = foreground;
+    if (foreground && foreground != hwnd_) {
+        const HWND root = GetAncestor(foreground, GA_ROOT);
+        const HWND candidate = root ? root : foreground;
+        if (!belongs_to_panel(candidate) && !capture::is_buddy_window(candidate)) previous_foreground_ = candidate;
+    }
 
     placement::Input input;
     POINT cursor{};
@@ -326,6 +340,16 @@ LRESULT PanelWindow::handle(UINT message, WPARAM wparam, LPARAM lparam) {
             return 0;
 
         case WM_ACTIVATE:
+            if (LOWORD(wparam) == WA_INACTIVE) {
+                const HWND next = reinterpret_cast<HWND>(lparam);
+                if (next) {
+                    const HWND root = GetAncestor(next, GA_ROOT);
+                    const HWND candidate = root ? root : next;
+                    if (!belongs_to_panel(candidate) && !capture::is_buddy_window(candidate)) {
+                        previous_foreground_ = candidate;
+                    }
+                }
+            }
             // Click-away: another window was activated. Ignore the panel's own popups, the first
             // moments after showing, and the deactivation the panel causes itself while hiding.
             if (LOWORD(wparam) == WA_INACTIVE && visible_ && !hiding_ && !options_.pinned &&

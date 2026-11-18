@@ -139,6 +139,7 @@ Settings from_json(std::string_view text, std::vector<std::string>* warnings) {
         read_int("height", s.panel_height);
         read_bool("hide_on_click_away", s.hide_on_click_away);
         read_bool("pinned", s.panel_pinned);
+        read_bool("captions_first", s.captions_first);
         const placement::Size clamped = placement::clamp_panel_size({s.panel_width, s.panel_height});
         s.panel_width = clamped.width;
         s.panel_height = clamped.height;
@@ -253,7 +254,8 @@ std::string to_json(const Settings& settings) {
                         {{"width", settings.panel_width},
                          {"height", settings.panel_height},
                          {"hide_on_click_away", settings.hide_on_click_away},
-                         {"pinned", settings.panel_pinned}}},
+                         {"pinned", settings.panel_pinned},
+                         {"captions_first", settings.captions_first}}},
                        {"muted", settings.muted},
                        {"voice", {{"base_url", settings.voice_base_url}, {"model", settings.voice_model}}},
                        {"speech",

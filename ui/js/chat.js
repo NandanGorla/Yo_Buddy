@@ -5,9 +5,10 @@ import { renderMarkdown } from './markdown.js';
 const STICK_TO_BOTTOM_PX = 80;
 
 export class ChatView {
-  constructor(listElement, emptyHint) {
+  constructor(listElement, emptyHint, onExpand = () => {}) {
     this.list = listElement;
     this.emptyHint = emptyHint;
+    this.onExpand = onExpand;
     this.active = null;   // the reply being streamed: { requestId, body, text, article, renderQueued }
   }
 
@@ -39,12 +40,20 @@ export class ChatView {
     }
   }
 
-  finish(requestId, note) {
+  finish(requestId, note, expandAvailable = false) {
     const active = this.active;
     if (!active || active.requestId !== requestId) return;
     this.#render(active);
     if (active.text.length === 0) active.body.textContent = '(no reply text)';
     if (note) this.#addNote(active.article, note);
+    if (expandAvailable && active.text.length > 0) {
+      const expand = document.createElement('button');
+      expand.type = 'button';
+      expand.className = 'btn msg-expand';
+      expand.textContent = 'Expand in full window';
+      expand.addEventListener('click', this.onExpand);
+      active.article.append(expand);
+    }
     this.#scrollToBottom();
     this.active = null;
   }

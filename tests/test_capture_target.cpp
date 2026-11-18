@@ -38,6 +38,7 @@ TEST_CASE("capture target: foreground target resolution returns a usable target"
         return;
     }
     CHECK(window.window != nullptr);
+    CHECK(resolve_target(window.window, false).window == window.window);
     REQUIRE(monitor.monitor.has_value());
     CHECK(monitor.monitor->bounds.right > monitor.monitor->bounds.left);
     CHECK(monitor.monitor->bounds.bottom > monitor.monitor->bounds.top);

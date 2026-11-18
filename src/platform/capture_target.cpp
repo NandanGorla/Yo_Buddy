@@ -45,18 +45,22 @@ WindowIdentityResult identify_window(HWND hwnd) {
 }
 
 TargetResult resolve_foreground_target(bool monitor_target) {
-    const HWND foreground = GetForegroundWindow();
+    return resolve_target(GetForegroundWindow(), monitor_target);
+}
+
+TargetResult resolve_target(HWND foreground, bool monitor_target) {
     if (!foreground || !IsWindow(foreground)) return {{}, nullptr, "There is no foreground window to capture."};
     if (is_buddy_window(foreground)) return {{}, nullptr, "Buddy windows cannot be captured."};
 
+    HWND top_level = GetAncestor(foreground, GA_ROOT);
+    if (!top_level) top_level = foreground;
+    if (is_buddy_window(top_level)) return {{}, nullptr, "Buddy windows cannot be captured."};
+
     if (!monitor_target) {
-        HWND top_level = GetAncestor(foreground, GA_ROOT);
-        if (!top_level) top_level = foreground;
-        if (is_buddy_window(top_level)) return {{}, nullptr, "Buddy windows cannot be captured."};
         return {{}, top_level, {}};
     }
 
-    const HMONITOR monitor = MonitorFromWindow(foreground, MONITOR_DEFAULTTONEAREST);
+    const HMONITOR monitor = MonitorFromWindow(top_level, MONITOR_DEFAULTTONEAREST);
     if (!monitor) return {{}, nullptr, "Could not find the monitor containing the foreground window."};
     MONITORINFO info{};
     info.cbSize = sizeof(info);

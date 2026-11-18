@@ -81,6 +81,7 @@ struct SetHotkey { std::string hotkey; };            // "settings.set_hotkey"  {
 struct SetPanel {                                    // "settings.set_panel"   {hide_on_click_away, pinned}
     bool hide_on_click_away = true;
     bool pinned = false;
+    bool captions_first = true;
 };
 struct SetCapturePolicy {                            // "settings.set_capture" {exclusions, send_preview}
     std::vector<std::string> exclusions;
@@ -100,12 +101,16 @@ struct CaptureRequest {                              // "capture.request"     {t
     std::string target;                              // "monitor" | "window"
     bool preview = true;
 };
+struct CaptureResolve {                               // "capture.resolve"     {capture_id, action}
+    std::string capture_id;
+    std::string action;                              // "approve" | "discard"
+};
 
 using UiMessage = std::variant<AppReady, ChatSend, ChatCancel, ChatClear, VoiceCancel, SetTheme, SetOverlayPalette, SetProvider,
                                SetVoice,
                                SetSpeech,
                                SetApiKey, ClearApiKey, UiLog, SetHotkey, SetPanel, WindowHide, OpenMain,
-                               LocalTestModel, SetCapturePolicy, OverlayDebug, CaptureRequest>;
+                               LocalTestModel, SetCapturePolicy, OverlayDebug, CaptureRequest, CaptureResolve>;
 
 struct ParseResult {
     std::optional<UiMessage> message;
@@ -144,14 +149,18 @@ std::string show_settings();                                                    
 std::string chat_delta(std::string_view request_id, std::string_view text);        // "chat.delta"
 std::string chat_done(std::string_view request_id, std::string_view stop_reason,
                       std::optional<std::int64_t> input_tokens,
-                      std::optional<std::int64_t> output_tokens);                  // "chat.done"
+                      std::optional<std::int64_t> output_tokens, bool expand_available = false); // "chat.done"
 std::string chat_error(std::string_view request_id, std::string_view code,
                        std::string_view message);                                  // "chat.error"
 std::string chat_cleared();                                                        // "chat.cleared"
 std::string host_error(std::string_view code, std::string_view message);           // "host.error"
 std::string local_test_result(std::string_view model, bool vision, std::string_view message); // "local.test_result"
-std::string capture_preview(std::string_view media_type, std::string_view base64,
-                            int width, int height); // "capture.preview"
+std::string capture_preview(std::string_view capture_id, std::string_view destination, bool remote,
+                            std::string_view media_type, std::string_view base64, int width,
+                            int height); // "capture.preview"
+std::string capture_ready(std::string_view capture_id); // "capture.ready"
+std::string capture_cleared(std::string_view capture_id); // "capture.cleared"
+std::string capture_used(std::string_view capture_id); // "capture.used"
 // state: idle | listening | listening_toggle | transcribing | error
 std::string voice_state(std::string_view state, std::string_view error); // "voice.state"
 

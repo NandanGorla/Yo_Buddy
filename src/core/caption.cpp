@@ -1,6 +1,8 @@
 #include "core/caption.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 
 #include "core/text.h"
 
@@ -21,6 +23,24 @@ bool has_fenced_code(std::string_view text) { return text.find("```") != std::st
 
 bool has_table(std::string_view text) {
     return text.find('|') != std::string_view::npos && text.find("---") != std::string_view::npos;
+}
+
+bool has_diagram(std::string_view text) {
+    std::string lower;
+    lower.reserve(text.size());
+    for (const unsigned char c : text) lower.push_back(static_cast<char>(std::tolower(c)));
+    static constexpr std::array<std::string_view, 12> markers{
+        "flowchart ", "sequenceDiagram", "classDiagram", "stateDiagram", "erDiagram", "mindmap",
+        "gitgraph", "gantt", "journey", "-->", "==>", "<--"};
+    for (const std::string_view marker : markers) {
+        std::string lower_marker;
+        lower_marker.reserve(marker.size());
+        for (const unsigned char c : marker) lower_marker.push_back(static_cast<char>(std::tolower(c)));
+        if (lower.find(lower_marker) != std::string::npos) return true;
+    }
+    return lower.find("graph td") != std::string::npos || lower.find("graph lr") != std::string::npos ||
+           lower.find("graph tb") != std::string::npos || lower.find("graph bt") != std::string::npos ||
+           lower.find("graph rl") != std::string::npos || lower.find("<svg") != std::string::npos;
 }
 
 // The number of times `c` repeats from `at`.
@@ -185,7 +205,8 @@ std::string to_plain(std::string_view markdown) {
 }
 
 bool overlay_ok(std::string_view markdown) {
-    if (markdown.size() > kMaxOverlayInputBytes || has_fenced_code(markdown) || has_table(markdown)) return false;
+    if (markdown.size() > kMaxOverlayInputBytes || has_fenced_code(markdown) || has_table(markdown) ||
+        has_diagram(markdown)) return false;
     const std::string plain = to_plain(markdown);
     return !plain.empty() && plain.size() <= kMaxOverlayBytes;
 }

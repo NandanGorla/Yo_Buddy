@@ -11,6 +11,8 @@
 #include <thread>
 #include <vector>
 
+#include <windows.h>
+
 #include "core/credentials.h"
 #include "core/hotkey.h"
 #include "core/protocol.h"
@@ -42,6 +44,7 @@ public:
         std::string app_version;
         // Delivers one protocol message (JSON text) to the web UI. Called on the UI thread only.
         std::function<void(const std::string& json)> send_to_ui;
+        std::function<void(ViewId, const std::string& json)> send_to_view;
         // Queues a task to run on the UI thread. Called from the worker thread.
         std::function<void(std::function<void()>)> run_on_ui;
 
@@ -50,6 +53,7 @@ public:
         std::function<void(ViewId)> hide_window;              // hide the window a message came from
         std::function<void(bool show_settings)> open_main;    // bring up the main window
         std::function<void(const protocol::OverlayDebug&)> overlay_debug;
+        std::function<HWND(ViewId)> capture_foreground_window;
 
         // Voice (M3). Optional as well.
         std::function<void(std::string text)> speak;          // read a finished reply aloud
@@ -100,6 +104,7 @@ private:
     struct DeltaBuffer;
 
     void send(const std::string& json) const;
+    void send_to_view(ViewId view, const std::string& json) const;
     void send_state() const;
 
     void on_message(const protocol::AppReady&);
@@ -123,6 +128,7 @@ private:
     void on_message(const protocol::OpenMain&);
     void on_message(const protocol::LocalTestModel&);
     void on_message(const protocol::CaptureRequest&);
+    void on_message(const protocol::CaptureResolve&);
 
     void send_history() const;
 
@@ -130,7 +136,8 @@ private:
         std::string code;      // a chat.error code
         std::string message;   // written for the user
     };
-    std::optional<ChatRefusal> begin_chat(const std::string& request_id, const std::string& text);
+    std::optional<ChatRefusal> begin_chat(const std::string& request_id, const std::string& text,
+                                          ViewId source, bool voice_request);
 
     void flush_deltas(const std::string& request_id, DeltaBuffer& buffer);
     void finish_chat(const std::string& request_id, const ChatResult& result);
@@ -145,6 +152,16 @@ private:
     std::string reply_so_far_;
     std::string active_model_;
     std::optional<ImageInput> pending_capture_;
+    struct CaptureConsent {
+        std::string id;
+        ViewId source = ViewId::Main;
+        ImageInput image;
+    };
+    std::optional<CaptureConsent> capture_preview_;
+    std::string pending_capture_id_;
+    std::uint64_t next_capture_id_ = 1;
+    ViewId active_source_ = ViewId::Main;
+    bool active_voice_request_ = false;
     bool busy_ = false;
     std::uint64_t next_voice_request_ = 1;   // numbers the request ids of spoken questions
     bool first_run_ = false;

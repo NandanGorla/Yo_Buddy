@@ -35,6 +35,8 @@ private:
     void resize();
     void update_indicator();
     void smooth_indicator();
+    void update_animation_timer();
+    bool has_pulsing_commands() const;
 
     HINSTANCE instance_;
     const theme::Theme* theme_;
@@ -44,6 +46,7 @@ private:
     HWND hwnd_ = nullptr;
     std::vector<overlay::Command> commands_;
     bool indicator_enabled_ = false;
+    bool animation_timer_running_ = false;
     POINT indicator_{};
     POINT indicator_target_{};
     bool indicator_positioned_ = false;

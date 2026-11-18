@@ -27,6 +27,13 @@ TEST_CASE("caption: a table stays in the panel", "[caption]") {
     CHECK(for_overlay(table).empty());
 }
 
+TEST_CASE("caption: diagrams stay in the panel", "[caption][m4]") {
+    CHECK_FALSE(overlay_ok("flowchart LR\nA --> B\n"));
+    CHECK_FALSE(overlay_ok("graph TD\nA --> B\n"));
+    CHECK_FALSE(overlay_ok("<svg><path d=\"M0 0\"/></svg>"));
+    CHECK_FALSE(overlay_ok("Start --> Review --> Done"));
+}
+
 TEST_CASE("caption: a short plain reply is overlay-ready", "[caption]") {
     CHECK(overlay_ok("Click File, then New."));
     CHECK(for_overlay("Click **File**, then New.") == "Click File, then New.");

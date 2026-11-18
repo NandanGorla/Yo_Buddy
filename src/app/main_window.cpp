@@ -5,6 +5,7 @@
 #include "app/win_util.h"
 #include "core/log.h"
 #include "core/protocol.h"
+#include "platform/capture_target.h"
 #include "platform/win_text.h"
 
 namespace buddy {
@@ -23,6 +24,15 @@ MainWindow::MainWindow(WindowServices services) : services_(std::move(services))
 MainWindow::~MainWindow() { destroy(); }
 
 bool MainWindow::visible() const { return hwnd_ && IsWindowVisible(hwnd_); }
+
+HWND MainWindow::capture_target_window() const {
+    if (previous_foreground_ && IsWindow(previous_foreground_)) {
+        const HWND root = GetAncestor(previous_foreground_, GA_ROOT);
+        const HWND candidate = root ? root : previous_foreground_;
+        if (!capture::is_buddy_window(candidate)) return candidate;
+    }
+    return GetForegroundWindow();
+}
 
 void MainWindow::post(const std::string& json) {
     if (hwnd_) webview_.post_json(json);
@@ -49,6 +59,12 @@ void MainWindow::show(bool open_settings) {
     if (!hwnd_ && !create()) {
         log::error("could not create the main window");
         return;
+    }
+    const HWND foreground = GetForegroundWindow();
+    if (foreground && foreground != hwnd_) {
+        const HWND root = GetAncestor(foreground, GA_ROOT);
+        const HWND candidate = root ? root : foreground;
+        if (!capture::is_buddy_window(candidate)) previous_foreground_ = candidate;
     }
     ShowWindow(hwnd_, IsIconic(hwnd_) ? SW_RESTORE : SW_SHOW);
     webview_.set_visible(true);
@@ -205,6 +221,17 @@ LRESULT MainWindow::handle(UINT message, WPARAM wparam, LPARAM lparam) {
         case WM_SETFOCUS:
             webview_.focus();   // the host window itself has nothing to focus
             return 0;
+
+        case WM_ACTIVATE:
+            if (LOWORD(wparam) == WA_INACTIVE) {
+                const HWND next = reinterpret_cast<HWND>(lparam);
+                if (next) {
+                    const HWND root = GetAncestor(next, GA_ROOT);
+                    const HWND candidate = root ? root : next;
+                    if (!capture::is_buddy_window(candidate)) previous_foreground_ = candidate;
+                }
+            }
+            break;
 
         case WM_CLOSE:
             hide();   // closing only hides: Buddy keeps running in the notification area

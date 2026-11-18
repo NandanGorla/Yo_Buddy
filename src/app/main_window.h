@@ -41,6 +41,7 @@ public:
 
     bool visible() const;
     HWND hwnd() const { return hwnd_; }
+    HWND capture_target_window() const;
     void post(const std::string& json);   // one protocol message to this window's web UI
     void apply_theme();
 
@@ -52,6 +53,7 @@ private:
 
     WindowServices services_;
     HWND hwnd_ = nullptr;
+    HWND previous_foreground_ = nullptr;
     HBRUSH background_brush_ = nullptr;
     COLORREF background_ = RGB(255, 255, 255);
     std::string applied_theme_;

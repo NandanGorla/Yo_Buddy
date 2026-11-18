@@ -13,6 +13,7 @@ const MAX_CHAT_TEXT_BYTES = 200 * 1000;
 const MAX_LOG_BYTES = 2000;
 const MAX_BASE_URL = 2048;
 const MAX_TEXT = 1024 * 1024;
+const MAX_CAPTURE_BASE64 = 8 * 1024 * 1024;
 
 const ID_RE = /^[a-z0-9_-]{1,64}$/;
 const MODEL_RE = /^[A-Za-z0-9._:/@-]{0,128}$/;
@@ -81,7 +82,8 @@ const OUTGOING = {
   'settings.clear_api_key': (p) => hasExactly(p, ['provider']) && isId(p.provider),
   'settings.set_hotkey': (p) => hasExactly(p, ['hotkey']) && isString(p.hotkey, 64) && p.hotkey.length > 0,
   'settings.set_panel': (p) =>
-    hasExactly(p, ['hide_on_click_away', 'pinned']) && isBool(p.hide_on_click_away) && isBool(p.pinned),
+    hasExactly(p, ['hide_on_click_away', 'pinned', 'captions_first']) &&
+    isBool(p.hide_on_click_away) && isBool(p.pinned) && isBool(p.captions_first),
   'settings.set_capture': (p) =>
     hasExactly(p, ['exclusions', 'send_preview']) &&
     Array.isArray(p.exclusions) &&
@@ -105,6 +107,8 @@ const OUTGOING = {
     hasExactly(p, ['target', 'preview']) &&
     (p.target === 'monitor' || p.target === 'window') &&
     isBool(p.preview),
+  'capture.resolve': (p) =>
+    hasExactly(p, ['capture_id', 'action']) && isId(p.capture_id) && ['approve', 'discard'].includes(p.action),
   'ui.log': (p) =>
     hasExactly(p, ['level', 'message']) &&
     ['info', 'warn', 'error'].includes(p.level) &&
@@ -150,7 +154,8 @@ const isHotkeyState = (h) =>
   isString(h.message, 400);
 
 const isPanelState = (s) =>
-  hasExactly(s, ['hide_on_click_away', 'pinned']) && isBool(s.hide_on_click_away) && isBool(s.pinned);
+  hasExactly(s, ['hide_on_click_away', 'pinned', 'captions_first']) &&
+  isBool(s.hide_on_click_away) && isBool(s.pinned) && isBool(s.captions_first);
 const isOverlayState = (o) =>
   hasExactly(o, ['ring', 'dot', 'caption']) &&
   isColor(o.ring) &&
@@ -218,11 +223,12 @@ const INCOMING = {
   'ui.show_settings': (p) => hasExactly(p, []),
   'chat.delta': (p) => hasExactly(p, ['request_id', 'text']) && isId(p.request_id) && isString(p.text),
   'chat.done': (p) =>
-    hasExactly(p, ['request_id', 'stop_reason', 'input_tokens', 'output_tokens']) &&
+    hasExactly(p, ['request_id', 'stop_reason', 'input_tokens', 'output_tokens', 'expand_available']) &&
     isId(p.request_id) &&
     isString(p.stop_reason, 64) &&
     isCountOrNull(p.input_tokens) &&
-    isCountOrNull(p.output_tokens),
+    isCountOrNull(p.output_tokens) &&
+    isBool(p.expand_available),
   'chat.error': (p) =>
     hasExactly(p, ['request_id', 'code', 'message']) && isId(p.request_id) && isString(p.code, 64) && isString(p.message, 4000),
   'chat.cleared': (p) => hasExactly(p, []),
@@ -232,6 +238,16 @@ const INCOMING = {
     isString(p.model, 128) &&
     isBool(p.vision) &&
     isString(p.message, 4000),
+  'capture.preview': (p) =>
+    hasExactly(p, ['capture_id', 'destination', 'remote', 'media_type', 'base64', 'width', 'height']) &&
+    isId(p.capture_id) && isString(p.destination, MAX_BASE_URL + 80) && p.destination.length > 0 && isBool(p.remote) &&
+    p.media_type === 'image/png' &&
+    isString(p.base64, MAX_CAPTURE_BASE64) && p.base64.length > 0 &&
+    Number.isInteger(p.width) && p.width > 0 && p.width <= 8192 &&
+    Number.isInteger(p.height) && p.height > 0 && p.height <= 8192,
+  'capture.ready': (p) => hasExactly(p, ['capture_id']) && isId(p.capture_id),
+  'capture.cleared': (p) => hasExactly(p, ['capture_id']) && isId(p.capture_id),
+  'capture.used': (p) => hasExactly(p, ['capture_id']) && isId(p.capture_id),
 };
 
 // Checks a message from the host. Returns { ok: true, type, payload } or { ok: false, error }.

@@ -47,6 +47,7 @@ public:
 
     bool visible() const { return visible_; }
     HWND hwnd() const { return hwnd_; }
+    HWND capture_target_window() const;
     void post(const std::string& json);
     void apply_theme();
 

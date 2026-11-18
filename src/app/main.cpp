@@ -113,6 +113,13 @@ public:
         deps.theme_folders = {paths::exe_dir() / L"themes", paths::data_dir() / L"themes"};
         deps.app_version = BUDDY_VERSION;
         deps.send_to_ui = [this](const std::string& json) { post_ui(json); };
+        deps.send_to_view = [this](ViewId view, const std::string& json) {
+            if (view == ViewId::Panel) {
+                if (panel_) panel_->post(json);
+            } else if (main_) {
+                main_->post(json);
+            }
+        };
         deps.run_on_ui = [dispatcher = dispatcher_](std::function<void()> task) { dispatcher->post(std::move(task)); };
         deps.hotkeys = &registrar_;
         deps.hide_window = [this](ViewId view) {
@@ -121,6 +128,11 @@ public:
             } else if (main_) {
                 main_->hide();
             }
+        };
+        deps.capture_foreground_window = [this](ViewId view) {
+            if (view == ViewId::Panel && panel_) return panel_->capture_target_window();
+            if (view == ViewId::Main && main_) return main_->capture_target_window();
+            return GetForegroundWindow();
         };
         deps.open_main = [this](bool settings) { open_main(settings); };
         deps.speak = [this](std::string text) {

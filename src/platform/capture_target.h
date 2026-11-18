@@ -36,6 +36,7 @@ WindowIdentityResult identify_window(HWND hwnd);
 // Resolves the target at request time. A monitor target follows the foreground window's monitor;
 // a window target is the foreground top-level window. The caller must reject Buddy-owned HWNDs.
 TargetResult resolve_foreground_target(bool monitor_target);
+TargetResult resolve_target(HWND foreground, bool monitor_target);
 
 bool is_buddy_window(HWND hwnd);
 

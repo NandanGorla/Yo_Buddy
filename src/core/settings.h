@@ -30,6 +30,7 @@ struct Settings {
     int panel_height = 560;
     bool hide_on_click_away = true;           // hide the panel when another window is clicked
     bool panel_pinned = false;                // pinned: stays open until hidden explicitly
+    bool captions_first = true;               // short replies become captions; complex replies stay in the panel
     bool muted = false;                       // tray "Mute"; silences spoken output
 
     // Voice input: a speech-to-text server the user runs on this PC (loopback only). It is

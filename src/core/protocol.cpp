@@ -176,13 +176,15 @@ ParseResult parse_payload(const std::string& type, const json& p) {
         return ok(SetHotkey{*hotkey});
     }
     if (type == "settings.set_panel") {
-        if (!has_exactly(p, {"hide_on_click_away", "pinned"})) {
-            return bad_payload(type, "expected hide_on_click_away and pinned");
+        if (!has_exactly(p, {"hide_on_click_away", "pinned", "captions_first"})) {
+            return bad_payload(type, "expected hide_on_click_away, pinned and captions_first");
         }
-        if (!p["hide_on_click_away"].is_boolean() || !p["pinned"].is_boolean()) {
-            return bad_payload(type, "hide_on_click_away and pinned must be booleans");
+        if (!p["hide_on_click_away"].is_boolean() || !p["pinned"].is_boolean() ||
+            !p["captions_first"].is_boolean()) {
+            return bad_payload(type, "panel options must be booleans");
         }
-        return ok(SetPanel{p["hide_on_click_away"].get<bool>(), p["pinned"].get<bool>()});
+        return ok(SetPanel{p["hide_on_click_away"].get<bool>(), p["pinned"].get<bool>(),
+                           p["captions_first"].get<bool>()});
     }
     if (type == "settings.set_capture") {
         if (!has_exactly(p, {"exclusions", "send_preview"})) {
@@ -244,6 +246,15 @@ ParseResult parse_payload(const std::string& type, const json& p) {
         }
         if (!p["preview"].is_boolean()) return bad_payload(type, "preview must be a boolean");
         return ok(CaptureRequest{*target, p["preview"].get<bool>()});
+    }
+    if (type == "capture.resolve") {
+        if (!has_exactly(p, {"capture_id", "action"})) return bad_payload(type, "expected capture_id and action");
+        const auto* id = string_field(p, "capture_id");
+        const auto* action = string_field(p, "action");
+        if (!id || !is_valid_id(*id) || !action || (*action != "approve" && *action != "discard")) {
+            return bad_payload(type, "invalid capture decision");
+        }
+        return ok(CaptureResolve{*id, *action});
     }
     return fail("unknown_type", "unknown message type");
 }
@@ -335,8 +346,9 @@ std::string chat_delta(std::string_view request_id, std::string_view text) {
 
 std::string chat_done(std::string_view request_id, std::string_view stop_reason,
                       std::optional<std::int64_t> input_tokens,
-                      std::optional<std::int64_t> output_tokens) {
-    json payload = {{"request_id", request_id}, {"stop_reason", stop_reason}};
+                      std::optional<std::int64_t> output_tokens, bool expand_available) {
+    json payload = {{"request_id", request_id}, {"stop_reason", stop_reason},
+                    {"expand_available", expand_available}};
     payload["input_tokens"] = input_tokens ? json(*input_tokens) : json(nullptr);
     payload["output_tokens"] = output_tokens ? json(*output_tokens) : json(nullptr);
     return make_message("chat.done", std::move(payload));
@@ -357,9 +369,23 @@ std::string local_test_result(std::string_view model, bool vision, std::string_v
     return make_message("local.test_result", {{"model", model}, {"vision", vision}, {"message", message}});
 }
 
-std::string capture_preview(std::string_view media_type, std::string_view base64, int width, int height) {
+std::string capture_preview(std::string_view capture_id, std::string_view destination, bool remote,
+                            std::string_view media_type, std::string_view base64, int width, int height) {
     return make_message("capture.preview",
-                        {{"media_type", media_type}, {"base64", base64}, {"width", width}, {"height", height}});
+                        {{"capture_id", capture_id}, {"destination", destination}, {"remote", remote},
+                         {"media_type", media_type}, {"base64", base64}, {"width", width}, {"height", height}});
+}
+
+std::string capture_ready(std::string_view capture_id) {
+    return make_message("capture.ready", {{"capture_id", capture_id}});
+}
+
+std::string capture_cleared(std::string_view capture_id) {
+    return make_message("capture.cleared", {{"capture_id", capture_id}});
+}
+
+std::string capture_used(std::string_view capture_id) {
+    return make_message("capture.used", {{"capture_id", capture_id}});
 }
 
 std::string voice_state(std::string_view state, std::string_view error) {

@@ -137,6 +137,16 @@ input, textarea { padding: 6px 8px; width: 100%; }
   background: var(--bd-surface);
 }
 .composer textarea { flex: 1; resize: none; max-height: 200px; }
+.capture-controls { display: flex; align-items: center; gap: 4px; }
+.capture-controls select { width: auto; max-width: 84px; padding: 4px; }
+.capture-ready { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 6px 16px; border-top: 1px solid var(--bd-border); background: var(--bd-surface-raised); color: var(--bd-text-muted); font-size: 12px; }
+.capture-ready .btn { padding: 2px 8px; }
+.capture-dialog { max-width: min(900px, 92vw); max-height: 92vh; overflow: auto; padding: 16px; color: var(--bd-text); background: var(--bd-surface); border: 1px solid var(--bd-border); border-radius: var(--bd-radius); }
+.capture-dialog::backdrop { background: color-mix(in srgb, var(--bd-bg) 72%, transparent); }
+.capture-dialog h2 { margin-bottom: 8px; font-size: 16px; }
+.capture-dialog img { display: block; max-width: 100%; max-height: 65vh; margin: 8px auto; object-fit: contain; border: 1px solid var(--bd-border); }
+.capture-dialog .row { justify-content: flex-end; }
+.msg-expand { margin-top: 8px; }
 
 /* ---- settings panel ---- */
 .settings {
@@ -186,5 +196,7 @@ html[data-view="panel"] .model-badge { font-size: 11px; max-width: 45%; }
 html[data-view="panel"] .messages { padding: 10px; gap: 8px; }
 html[data-view="panel"] .msg-body { padding: 8px 10px; }
 html[data-view="panel"] .composer { padding: 8px; gap: 6px; }
+html[data-view="panel"] .capture-controls { gap: 3px; }
+html[data-view="panel"] .capture-controls .btn { padding: 2px 6px; }
 html[data-view="panel"] .empty-hint { font-size: 13px; }
 html[data-view="panel"] #pin-button[aria-pressed="true"] { background: var(--bd-accent); color: var(--bd-accent-text); border-color: var(--bd-accent); }

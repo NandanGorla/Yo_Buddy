@@ -67,6 +67,11 @@ void AppController::send(const std::string& json_text) const {
     if (deps_.send_to_ui) deps_.send_to_ui(json_text);
 }
 
+void AppController::send_to_view(ViewId view, const std::string& json_text) const {
+    if (deps_.send_to_view) deps_.send_to_view(view, json_text);
+    else send(json_text);
+}
+
 void AppController::send_state() const {
     json themes = json::array();
     for (const theme::Theme& t : themes_.themes) themes.push_back(theme::to_json(t));
@@ -96,7 +101,8 @@ void AppController::send_state() const {
                                 {"message", hotkey_message()}}},
                               {"panel",
                                {{"hide_on_click_away", settings_.hide_on_click_away},
-                                {"pinned", settings_.panel_pinned}}},
+                                {"pinned", settings_.panel_pinned},
+                                {"captions_first", settings_.captions_first}}},
                               {"capture",
                                {{"exclusions", settings_.capture_exclusions},
                                 {"send_preview", settings_.capture_send_preview}}},
@@ -159,13 +165,15 @@ void AppController::on_message(const protocol::CaptureRequest& request) {
         return;
     }
 
-    const capture::TargetResult target =
-        capture::resolve_foreground_target(request.target == "monitor");
+    const HWND foreground = deps_.capture_foreground_window ? deps_.capture_foreground_window(current_source_)
+                                                            : GetForegroundWindow();
+    const capture::TargetResult target = capture::resolve_target(foreground, request.target == "monitor");
     if (!target.ok()) {
         send(protocol::host_error("capture_failed", target.error));
         return;
     }
-    const HWND identity_window = target.window ? target.window : GetForegroundWindow();
+    HWND identity_window = target.window ? target.window : GetAncestor(foreground, GA_ROOT);
+    if (!identity_window) identity_window = foreground;
     const capture::WindowIdentityResult identity = capture::identify_window(identity_window);
     if (!identity.ok()) {
         send(protocol::host_error("capture_failed", identity.error));
@@ -176,7 +184,7 @@ void AppController::on_message(const protocol::CaptureRequest& request) {
         return;
     }
 
-    const capture::FrameResult frame = capture::capture_one(target);
+    const capture::FrameResult frame = capture::capture_one(target, 1024);
     if (!frame.ok()) {
         send(protocol::host_error("capture_failed", frame.error));
         return;
@@ -186,8 +194,43 @@ void AppController::on_message(const protocol::CaptureRequest& request) {
         send(protocol::host_error("capture_failed", encoded.error));
         return;
     }
-    pending_capture_ = ImageInput{"image/png", encoded.base64};
-    send(protocol::capture_preview("image/png", encoded.base64, frame.frame.width, frame.frame.height));
+    if (capture_preview_) send_to_view(capture_preview_->source, protocol::capture_cleared(capture_preview_->id));
+    if (pending_capture_) send(protocol::capture_cleared(pending_capture_id_));
+    const std::string capture_id = "cap_" + std::to_string(next_capture_id_++);
+    const std::string destination = provider->label + " (" + endpoint.url->to_string() + ")";
+    capture_preview_ = CaptureConsent{capture_id, current_source_, ImageInput{"image/png", encoded.base64}};
+    send_to_view(current_source_, protocol::capture_preview(capture_id, destination,
+                                                            !url::is_loopback_host(endpoint.url->host),
+                                                            "image/png", encoded.base64,
+                                                            frame.frame.width, frame.frame.height));
+}
+
+void AppController::on_message(const protocol::CaptureResolve& decision) {
+    if (capture_preview_ && capture_preview_->id == decision.capture_id &&
+        capture_preview_->source == current_source_) {
+        const std::string id = capture_preview_->id;
+        if (decision.action == "approve") {
+            if (pending_capture_) send(protocol::capture_cleared(pending_capture_id_));
+            pending_capture_ = std::move(capture_preview_->image);
+            pending_capture_id_ = id;
+            capture_preview_.reset();
+            send(protocol::capture_ready(id));
+            log::info("capture: preview approved and staged for one chat message");
+        } else {
+            capture_preview_.reset();
+            send(protocol::capture_cleared(id));
+            log::info("capture: preview discarded by the user");
+        }
+        return;
+    }
+    if (decision.action == "discard" && pending_capture_ && pending_capture_id_ == decision.capture_id) {
+        pending_capture_.reset();
+        pending_capture_id_.clear();
+        send(protocol::capture_cleared(decision.capture_id));
+        log::info("capture: approved image removed before use");
+        return;
+    }
+    send(protocol::host_error("capture_stale", "That screenshot is no longer awaiting a decision."));
 }
 
 void AppController::send_history() const {
@@ -250,7 +293,7 @@ void AppController::submit_voice_text(std::string_view spoken) {
     const std::string text = text::truncate_utf8(text::trim_ascii(spoken), protocol::kMaxChatTextBytes);
     if (text.empty()) return;
     const std::string request_id = "voice_" + std::to_string(next_voice_request_++);
-    if (const auto refusal = begin_chat(request_id, text)) {
+    if (const auto refusal = begin_chat(request_id, text, ViewId::Main, true)) {
         // No window sent this request, so none of them would show a chat.error for it. Every
         // window shows the voice state, so the reason goes there.
         send(protocol::voice_state("error", refusal->message + " Your spoken question was not sent."));
@@ -277,6 +320,7 @@ void AppController::on_message(const protocol::SetHotkey& m) {
 void AppController::on_message(const protocol::SetPanel& m) {
     settings_.hide_on_click_away = m.hide_on_click_away;
     settings_.panel_pinned = m.pinned;
+    settings_.captions_first = m.captions_first;
     save_settings();
     send_state();
 }
@@ -377,6 +421,15 @@ void AppController::on_message(const protocol::SetProvider& m) {
         send(protocol::host_error("invalid_base_url", parsed.error));
         return;
     }
+    if (capture_preview_) {
+        send_to_view(capture_preview_->source, protocol::capture_cleared(capture_preview_->id));
+        capture_preview_.reset();
+    }
+    if (pending_capture_) {
+        send(protocol::capture_cleared(pending_capture_id_));
+        pending_capture_.reset();
+        pending_capture_id_.clear();
+    }
     provider->base_url = parsed.url->to_string();
     provider->model = m.model;
     settings_.provider = provider->id;
@@ -472,7 +525,7 @@ void AppController::on_message(const protocol::ChatCancel& m) {
 }
 
 void AppController::on_message(const protocol::ChatSend& m) {
-    if (const auto refusal = begin_chat(m.request_id, m.text)) {
+    if (const auto refusal = begin_chat(m.request_id, m.text, current_source_, false)) {
         send(protocol::chat_error(m.request_id, refusal->code, refusal->message));
     }
 }
@@ -480,7 +533,8 @@ void AppController::on_message(const protocol::ChatSend& m) {
 // Starts a reply to `text`. Returns why not when the request cannot be started; nothing has been
 // sent to the UI in that case, so the caller decides where the reason is shown.
 std::optional<AppController::ChatRefusal> AppController::begin_chat(const std::string& request_id,
-                                                                    const std::string& text) {
+                                                                    const std::string& text, ViewId source,
+                                                                    bool voice_request) {
     if (busy_) return ChatRefusal{"busy", "A reply is already in progress."};
     const settings::ProviderConfig provider = settings_.active();
     if (provider.model.empty()) {
@@ -502,6 +556,8 @@ std::optional<AppController::ChatRefusal> AppController::begin_chat(const std::s
 
     conversation_.push_back({Role::User, text});
     busy_ = true;
+    active_source_ = source;
+    active_voice_request_ = voice_request;
     active_request_ = request_id;
     reply_so_far_.clear();
     active_model_ = provider.model;
@@ -520,6 +576,8 @@ std::optional<AppController::ChatRefusal> AppController::begin_chat(const std::s
     if (pending_capture_) {
         images.push_back(std::move(*pending_capture_));
         pending_capture_.reset();
+        send(protocol::capture_used(pending_capture_id_));
+        pending_capture_id_.clear();
     }
 
     if (worker_.joinable()) worker_.join();   // the previous worker has finished; reclaim it
@@ -592,18 +650,27 @@ void AppController::finish_chat(const std::string& request_id, const ChatResult&
     }
     reply_so_far_.clear();
 
+    bool hide_panel_for_caption = false;
+    bool expand_available = false;
     if (result.status == ChatStatus::Ok || result.status == ChatStatus::Cancelled) {
         if (result.status == ChatStatus::Ok && !spoken_reply.empty()) {
-            if (deps_.show_caption) {
-                const std::string overlay = caption::for_overlay(spoken_reply);
-                if (!overlay.empty()) deps_.show_caption(overlay);
+            const std::string overlay = caption::for_overlay(spoken_reply);
+            const bool overlay_eligible = !overlay.empty();
+            const bool show_caption = overlay_eligible && (settings_.captions_first || active_voice_request_);
+            if (show_caption && deps_.show_caption) {
+                deps_.show_caption(overlay);
+                hide_panel_for_caption = !active_voice_request_ && active_source_ == ViewId::Panel &&
+                                         settings_.captions_first && !settings_.panel_pinned;
             }
+            expand_available = active_source_ == ViewId::Panel && !overlay_eligible;
             if (!settings_.muted && deps_.speak) {
                 const std::string spoken = caption::for_speech(spoken_reply);
                 if (!spoken.empty()) deps_.speak(spoken);
             }
         }
-        send(protocol::chat_done(request_id, result.stop_reason, result.input_tokens, result.output_tokens));
+        send(protocol::chat_done(request_id, result.stop_reason, result.input_tokens, result.output_tokens,
+                                  expand_available));
+        if (hide_panel_for_caption && deps_.hide_window) deps_.hide_window(ViewId::Panel);
     } else {
         log::warn(std::string("chat failed: ") + to_code(result.status) + ", HTTP " +
                   std::to_string(result.http_status));

@@ -163,9 +163,18 @@ TEST_CASE("protocol: host messages are well-formed envelopes", "[protocol]") {
     const json delta = json::parse(chat_delta("r1", "<script>\"quoted\"</script>\n"));
     CHECK(delta["payload"]["text"] == "<script>\"quoted\"</script>\n");
 
-    const json done = json::parse(chat_done("r1", "stop", 10, std::nullopt));
+    const json done = json::parse(chat_done("r1", "stop", 10, std::nullopt, true));
     CHECK(done["payload"]["input_tokens"] == 10);
     CHECK(done["payload"]["output_tokens"].is_null());
+    CHECK(done["payload"]["expand_available"] == true);
+
+    const json preview = json::parse(
+        capture_preview("cap_1", "Anthropic (https://api.anthropic.com/v1)", true, "image/png", "AQID", 2, 3));
+    CHECK(preview["payload"]["destination"] == "Anthropic (https://api.anthropic.com/v1)");
+    CHECK(preview["payload"]["remote"] == true);
+    CHECK(preview["payload"]["media_type"] == "image/png");
+    CHECK(preview["payload"]["width"] == 2);
+    CHECK(preview["payload"]["height"] == 3);
 
     CHECK(json::parse(chat_error("r1", "auth_failed", "no"))["payload"]["code"] == "auth_failed");
     CHECK(json::parse(chat_cleared())["payload"].empty());
@@ -183,9 +192,12 @@ TEST_CASE("protocol: invalid UTF-8 in outgoing text is replaced, not thrown on",
 TEST_CASE("protocol: companion shell messages parse", "[protocol]") {
     CHECK(expect<SetHotkey>(envelope("settings.set_hotkey", {{"hotkey", "Ctrl+Alt+B"}})).hotkey == "Ctrl+Alt+B");
 
-    const auto panel = expect<SetPanel>(envelope("settings.set_panel", {{"hide_on_click_away", false}, {"pinned", true}}));
+    const auto panel = expect<SetPanel>(envelope("settings.set_panel",
+                                                  {{"hide_on_click_away", false}, {"pinned", true},
+                                                   {"captions_first", false}}));
     CHECK_FALSE(panel.hide_on_click_away);
     CHECK(panel.pinned);
+    CHECK_FALSE(panel.captions_first);
     const auto capture_policy =
         expect<SetCapturePolicy>(envelope("settings.set_capture",
                                            {{"exclusions", {"private", "Vault"}}, {"send_preview", false}}));
@@ -198,6 +210,10 @@ TEST_CASE("protocol: companion shell messages parse", "[protocol]") {
     const auto capture = expect<CaptureRequest>(envelope("capture.request", {{"target", "monitor"}, {"preview", true}}));
     CHECK(capture.target == "monitor");
     CHECK(capture.preview);
+    const auto capture_decision = expect<CaptureResolve>(
+        envelope("capture.resolve", {{"capture_id", "cap_1"}, {"action", "approve"}}));
+    CHECK(capture_decision.capture_id == "cap_1");
+    CHECK(capture_decision.action == "approve");
     CHECK(expect<OverlayDebug>(envelope("overlay.debug", {{"action", "caption"}, {"caption", "Hello"}})).caption ==
           "Hello");
 }
@@ -208,9 +224,9 @@ TEST_CASE("protocol: companion shell messages are validated", "[protocol]") {
     CHECK(error_of(envelope("settings.set_hotkey", {{"hotkey", 5}})) == "invalid_payload");
     CHECK(error_of(envelope("settings.set_hotkey", json::object())) == "invalid_payload");
 
-    CHECK(error_of(envelope("settings.set_panel", {{"hide_on_click_away", "yes"}, {"pinned", true}})) == "invalid_payload");
-    CHECK(error_of(envelope("settings.set_panel", {{"hide_on_click_away", true}, {"pinned", 1}})) == "invalid_payload");
-    CHECK(error_of(envelope("settings.set_panel", {{"pinned", true}})) == "invalid_payload");
+    CHECK(error_of(envelope("settings.set_panel", {{"hide_on_click_away", "yes"}, {"pinned", true}, {"captions_first", true}})) == "invalid_payload");
+    CHECK(error_of(envelope("settings.set_panel", {{"hide_on_click_away", true}, {"pinned", 1}, {"captions_first", true}})) == "invalid_payload");
+    CHECK(error_of(envelope("settings.set_panel", {{"pinned", true}, {"hide_on_click_away", true}})) == "invalid_payload");
     CHECK(error_of(envelope("settings.set_capture", {{"exclusions", {"ok"}}, {"send_preview", "yes"}})) ==
           "invalid_payload");
     CHECK(error_of(envelope("settings.set_capture", {{"exclusions", {std::string(129, 'x')}},
@@ -222,6 +238,7 @@ TEST_CASE("protocol: companion shell messages are validated", "[protocol]") {
     CHECK(error_of(envelope("capture.request", {{"target", "desktop"}, {"preview", true}})) == "invalid_payload");
     CHECK(error_of(envelope("capture.request", {{"target", "monitor"}, {"preview", 1}})) == "invalid_payload");
     CHECK(error_of(envelope("capture.request", {{"target", "monitor"}})) == "invalid_payload");
+    CHECK(error_of(envelope("capture.resolve", {{"capture_id", "cap_1"}, {"action", "send"}})) == "invalid_payload");
     CHECK(error_of(envelope("overlay.debug", {{"action", "unknown"}, {"caption", ""}})) == "invalid_payload");
 }
 

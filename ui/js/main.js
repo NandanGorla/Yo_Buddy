@@ -56,9 +56,20 @@ const el = {
   hotkeyStatus: $('hotkey-status'),
   clickAway: $('click-away-checkbox'),
   pinned: $('pinned-checkbox'),
+  captionsFirst: $('captions-first-checkbox'),
   captureExclusions: $('capture-exclusions'),
   capturePreview: $('capture-preview-checkbox'),
   saveCapture: $('save-capture-button'),
+  captureTarget: $('capture-target-select'),
+  captureButton: $('capture-button'),
+  captureReady: $('capture-ready'),
+  removeCapture: $('remove-capture-button'),
+  captureDialog: $('capture-dialog'),
+  captureImage: $('capture-preview-image'),
+  captureDimensions: $('capture-preview-dimensions'),
+  captureDestination: $('capture-preview-destination'),
+  discardCapture: $('discard-capture-button'),
+  approveCapture: $('approve-capture-button'),
   overlayDemo: $('overlay-demo-button'),
   overlayIndicator: $('overlay-indicator-button'),
   overlayClear: $('overlay-clear-button'),
@@ -69,7 +80,7 @@ const el = {
 
 if (isPanel) el.input.placeholder = 'Ask Buddy';   // the long hint does not fit the compact layout
 
-const chat = new ChatView($('messages'), $('empty-hint'));
+const chat = new ChatView($('messages'), $('empty-hint'), () => send('window.open_main', { settings: false }));
 
 let state = null;            // the latest "app.state" payload from the host
 let busy = false;            // a reply is being streamed
@@ -216,6 +227,7 @@ bridge.on('app.state', (payload) => {
   showHotkeyState(payload.hotkey);
   el.clickAway.checked = payload.panel.hide_on_click_away;
   el.pinned.checked = payload.panel.pinned;
+  el.captionsFirst.checked = payload.panel.captions_first;
   el.captureExclusions.value = payload.capture.exclusions.join('\n');
   el.capturePreview.checked = payload.capture.send_preview;
   el.pin.setAttribute('aria-pressed', String(payload.panel.pinned));
@@ -279,7 +291,7 @@ bridge.on('chat.done', (payload) => {
   if (payload.input_tokens !== null && payload.output_tokens !== null) {
     notes.push(`${payload.input_tokens} tokens in, ${payload.output_tokens} out`);
   }
-  chat.finish(payload.request_id, notes.join(' '));
+  chat.finish(payload.request_id, notes.join(' '), isPanel && payload.expand_available);
   activeRequest = null;
   setBusy(false);
 });
@@ -300,7 +312,7 @@ bridge.on('chat.cleared', () => {
 });
 
 bridge.on('host.error', (payload) => {
-  if (!isPanel) showBanner(payload.message || payload.code);
+  if (!isPanel || payload.code.startsWith('capture_')) showBanner(payload.message || payload.code);
   if (payload.code === 'local_test_failed') {
     el.localStatus.textContent = payload.message || payload.code;
   }
@@ -308,6 +320,36 @@ bridge.on('host.error', (payload) => {
 
 bridge.on('local.test_result', (payload) => {
   el.localStatus.textContent = payload.message;
+});
+
+let capturePreviewId = '';
+let approvedCaptureId = '';
+function setCaptureReady(captureId) {
+  approvedCaptureId = captureId;
+  el.captureReady.hidden = !captureId;
+}
+
+bridge.on('capture.preview', (payload) => {
+  capturePreviewId = payload.capture_id;
+  el.captureImage.src = `data:${payload.media_type};base64,${payload.base64}`;
+  el.captureDimensions.textContent = `Captured ${payload.width} × ${payload.height} pixels. This preview is local.`;
+  el.captureDestination.textContent = payload.remote
+    ? `If approved and used by your next message, this screenshot will be sent to ${payload.destination}.`
+    : `If approved and used by your next message, this screenshot will be sent to ${payload.destination} on this PC.`;
+  if (!el.captureDialog.open) el.captureDialog.showModal();
+});
+
+bridge.on('capture.ready', (payload) => setCaptureReady(payload.capture_id));
+bridge.on('capture.cleared', (payload) => {
+  if (approvedCaptureId === payload.capture_id) setCaptureReady('');
+  if (capturePreviewId === payload.capture_id) {
+    capturePreviewId = '';
+    el.captureImage.removeAttribute('src');
+    if (el.captureDialog.open) el.captureDialog.close();
+  }
+});
+bridge.on('capture.used', (payload) => {
+  if (approvedCaptureId === payload.capture_id) setCaptureReady('');
 });
 
 bridge.on('ui.focus_input', focusInput);
@@ -464,11 +506,40 @@ el.hotkey.addEventListener('keydown', (event) => {
 });
 
 function sendPanelOptions(pinned) {
-  send('settings.set_panel', { hide_on_click_away: el.clickAway.checked, pinned });
+  send('settings.set_panel', {
+    hide_on_click_away: el.clickAway.checked,
+    pinned,
+    captions_first: el.captionsFirst.checked,
+  });
 }
 
 el.clickAway.addEventListener('change', () => sendPanelOptions(el.pinned.checked));
 el.pinned.addEventListener('change', () => sendPanelOptions(el.pinned.checked));
+el.captionsFirst.addEventListener('change', () => sendPanelOptions(el.pinned.checked));
+
+el.captureButton.addEventListener('click', () => {
+  send('capture.request', { target: el.captureTarget.value, preview: true });
+});
+
+el.approveCapture.addEventListener('click', () => {
+  if (!capturePreviewId) return;
+  if (send('capture.resolve', { capture_id: capturePreviewId, action: 'approve' })) {
+    capturePreviewId = '';
+    el.captureDialog.close();
+    el.captureImage.removeAttribute('src');
+  }
+});
+
+el.discardCapture.addEventListener('click', () => {
+  if (capturePreviewId) send('capture.resolve', { capture_id: capturePreviewId, action: 'discard' });
+  capturePreviewId = '';
+  el.captureDialog.close();
+  el.captureImage.removeAttribute('src');
+});
+
+el.removeCapture.addEventListener('click', () => {
+  if (approvedCaptureId) send('capture.resolve', { capture_id: approvedCaptureId, action: 'discard' });
+});
 
 el.saveCapture.addEventListener('click', () => {
   const exclusions = el.captureExclusions.value
