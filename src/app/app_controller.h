@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -49,6 +50,11 @@ public:
         std::function<void(ViewId)> hide_window;              // hide the window a message came from
         std::function<void(bool show_settings)> open_main;    // bring up the main window
         std::function<void(const protocol::OverlayDebug&)> overlay_debug;
+
+        // Voice (M3). Optional as well.
+        std::function<void(std::string text)> speak;          // read a finished reply aloud
+        std::function<void(std::string text)> show_caption;   // short overlay caption; empty hides nothing
+        std::function<void()> cancel_voice;                   // stop recording, transcription and speech
     };
 
     explicit AppController(Deps deps);
@@ -69,12 +75,17 @@ public:
     hotkey::Status hotkey_status() const;
     std::string hotkey_message() const;     // user-facing text when the hotkey is not active
     std::string hotkey_active() const;      // the live binding, "" when none
+    std::optional<hotkey::Binding> hotkey_binding() const;
 
     const settings::Settings& settings() const { return settings_; }
     bool first_run() const { return first_run_; }   // no settings file existed at start-up
     void set_panel_size(int width_dip, int height_dip);
     void set_panel_pinned(bool pinned);
     void set_muted(bool muted);
+    // Sends transcribed speech as a chat message, as if it had been typed. When it cannot be
+    // sent (a reply is still running, no model chosen, ...) the reason goes out as a voice.state
+    // error, because no window sent the request and so none would show a chat.error for it.
+    void submit_voice_text(std::string_view spoken);
 
     // Stops a running chat and waits for its worker. Call before the UI goes away.
     void shutdown();
@@ -95,9 +106,12 @@ private:
     void on_message(const protocol::ChatSend&);
     void on_message(const protocol::ChatCancel&);
     void on_message(const protocol::ChatClear&);
+    void on_message(const protocol::VoiceCancel&);
     void on_message(const protocol::SetTheme&);
     void on_message(const protocol::SetOverlayPalette&);
     void on_message(const protocol::SetProvider&);
+    void on_message(const protocol::SetVoice&);
+    void on_message(const protocol::SetSpeech&);
     void on_message(const protocol::SetApiKey&);
     void on_message(const protocol::ClearApiKey&);
     void on_message(const protocol::UiLog&);
@@ -111,6 +125,12 @@ private:
     void on_message(const protocol::CaptureRequest&);
 
     void send_history() const;
+
+    struct ChatRefusal {
+        std::string code;      // a chat.error code
+        std::string message;   // written for the user
+    };
+    std::optional<ChatRefusal> begin_chat(const std::string& request_id, const std::string& text);
 
     void flush_deltas(const std::string& request_id, DeltaBuffer& buffer);
     void finish_chat(const std::string& request_id, const ChatResult& result);
@@ -126,6 +146,7 @@ private:
     std::string active_model_;
     std::optional<ImageInput> pending_capture_;
     bool busy_ = false;
+    std::uint64_t next_voice_request_ = 1;   // numbers the request ids of spoken questions
     bool first_run_ = false;
     ViewId current_source_ = ViewId::Main;   // the window whose message is being handled
     std::unique_ptr<hotkey::Manager> hotkey_;

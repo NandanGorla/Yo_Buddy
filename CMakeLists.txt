@@ -20,6 +20,7 @@ find_package(unofficial-webview2 CONFIG REQUIRED)
 
 # --- core: protocol, themes, settings. Standard library only, no Windows headers. ---
 add_library(buddy_core STATIC
+  src/core/caption.cpp
   src/core/hotkey.cpp
   src/core/log.cpp
   src/core/overlay_commands.cpp
@@ -30,6 +31,7 @@ add_library(buddy_core STATIC
   src/core/text.cpp
   src/core/theme.cpp
   src/core/url.cpp
+  src/core/wav.cpp
 )
 target_include_directories(buddy_core PUBLIC src)
 target_link_libraries(buddy_core PUBLIC nlohmann_json::nlohmann_json)
@@ -40,6 +42,7 @@ add_library(buddy_providers STATIC
   src/providers/local_endpoint.cpp
   src/providers/openai_compat.cpp
   src/providers/sse_parser.cpp
+  src/providers/transcription.cpp
 )
 target_link_libraries(buddy_providers PUBLIC buddy_core)
 
@@ -49,15 +52,18 @@ add_library(buddy_platform STATIC
   src/platform/capture_target.cpp
   src/platform/paths.cpp
   src/platform/screen_capture.cpp
+  src/platform/sapi_voice.cpp
   src/platform/winhttp_transport.cpp
+  src/platform/wasapi_recorder.cpp
 )
-target_link_libraries(buddy_platform PUBLIC buddy_providers d3d11 dxgi windowsapp windowscodecs PRIVATE winhttp advapi32 shell32 ole32)
+target_link_libraries(buddy_platform PUBLIC buddy_providers d3d11 dxgi windowsapp windowscodecs PRIVATE winhttp advapi32 shell32 ole32 sapi winmm)
 
 # --- app logic: the controller behind the UI bridge. No window code, so tests can drive it. ---
 add_library(buddy_app_logic STATIC
   src/app/app_controller.cpp
+  src/app/voice_session.cpp
 )
-target_link_libraries(buddy_app_logic PUBLIC buddy_providers)
+target_link_libraries(buddy_app_logic PUBLIC buddy_providers buddy_platform)
 
 # --- webhost: the WebView2 control and its lock-down. ---
 add_library(buddy_webhost STATIC
@@ -101,6 +107,7 @@ if(BUDDY_BUILD_TESTS)
   add_executable(buddy_tests
     tests/fake_transport.h
     tests/test_app_controller.cpp
+    tests/test_caption.cpp
     tests/test_capture_policy.cpp
     tests/test_capture_target.cpp
     tests/test_screen_capture.cpp
@@ -117,6 +124,11 @@ if(BUDDY_BUILD_TESTS)
     tests/test_theme.cpp
     tests/test_url.cpp
     tests/test_winhttp_transport.cpp
+    tests/test_transcription.cpp
+    tests/test_push_to_talk.cpp
+    tests/test_sapi_voice.cpp
+    tests/test_voice_session.cpp
+    tests/test_wav.cpp
   )
   target_compile_definitions(buddy_tests PRIVATE BUDDY_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
   target_link_libraries(buddy_tests PRIVATE

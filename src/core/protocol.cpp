@@ -39,6 +39,12 @@ const std::string* string_field(const json& obj, const char* key) {
     return it->get_ptr<const std::string*>();
 }
 
+std::optional<std::int64_t> integer_field(const json& obj, const char* key) {
+    const auto it = obj.find(key);
+    if (it == obj.end() || !it->is_number_integer()) return std::nullopt;
+    return it->get<std::int64_t>();
+}
+
 bool is_model_char(unsigned char c) {
     return text::is_ascii_alnum(c) || c == '.' || c == '_' || c == ':' || c == '/' || c == '@' ||
            c == '-';
@@ -72,6 +78,10 @@ ParseResult parse_payload(const std::string& type, const json& p) {
         if (!has_exactly(p, {})) return bad_payload(type, "expected an empty payload");
         return ok(ChatClear{});
     }
+    if (type == "voice.cancel") {
+        if (!has_exactly(p, {})) return bad_payload(type, "expected an empty payload");
+        return ok(VoiceCancel{});
+    }
     if (type == "settings.set_theme") {
         if (!has_exactly(p, {"theme"})) return bad_payload(type, "expected theme");
         const auto* theme = string_field(p, "theme");
@@ -102,6 +112,34 @@ ParseResult parse_payload(const std::string& type, const json& p) {
         }
         if (!model || !is_valid_model(*model)) return bad_payload(type, "model has invalid characters");
         return ok(SetProvider{*provider, *base_url, *model});
+    }
+    if (type == "settings.set_voice") {
+        if (!has_exactly(p, {"base_url", "model"})) return bad_payload(type, "expected base_url and model");
+        const auto* base_url = string_field(p, "base_url");
+        const auto* model = string_field(p, "model");
+        if (!base_url || base_url->empty() || base_url->size() > kMaxBaseUrlLength) {
+            return bad_payload(type, "base_url must be a non-empty string of reasonable length");
+        }
+        if (!model || !is_valid_model(*model) || model->empty()) return bad_payload(type, "model is invalid");
+        return ok(SetVoice{*base_url, *model});
+    }
+    if (type == "settings.set_speech") {
+        if (!has_exactly(p, {"voice", "base_url", "model", "rate", "pitch"}))
+            return bad_payload(type, "expected voice, base_url, model, rate and pitch");
+        const auto* voice = string_field(p, "voice");
+        const auto* base_url = string_field(p, "base_url");
+        const auto* model = string_field(p, "model");
+        const auto rate = integer_field(p, "rate");
+        const auto pitch = integer_field(p, "pitch");
+        // base_url and model may be empty: that switches the neural server off (Windows voices only).
+        if (!voice || voice->size() > kMaxSpeechVoiceLength) return bad_payload(type, "voice is too long");
+        if (!base_url || base_url->size() > kMaxBaseUrlLength) return bad_payload(type, "base_url is too long");
+        if (!model || !is_valid_model(*model)) return bad_payload(type, "model has invalid characters");
+        if (!rate || *rate < -10 || *rate > 10) return bad_payload(type, "rate must be a whole number from -10 to 10");
+        if (!pitch || *pitch < -10 || *pitch > 10) {
+            return bad_payload(type, "pitch must be a whole number from -10 to 10");
+        }
+        return ok(SetSpeech{*voice, *base_url, *model, static_cast<int>(*rate), static_cast<int>(*pitch)});
     }
     if (type == "settings.set_api_key") {
         if (!has_exactly(p, {"provider", "key"})) return bad_payload(type, "expected provider and key");
@@ -322,6 +360,10 @@ std::string local_test_result(std::string_view model, bool vision, std::string_v
 std::string capture_preview(std::string_view media_type, std::string_view base64, int width, int height) {
     return make_message("capture.preview",
                         {{"media_type", media_type}, {"base64", base64}, {"width", width}, {"height", height}});
+}
+
+std::string voice_state(std::string_view state, std::string_view error) {
+    return make_message("voice.state", {{"state", state}, {"error", error}});
 }
 
 }  // namespace buddy::protocol

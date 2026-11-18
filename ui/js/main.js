@@ -20,6 +20,7 @@ const el = {
   overlayCaptionColor: $('overlay-caption-color'),
   saveOverlayColors: $('save-overlay-colors-button'),
   newChat: $('new-chat-button'),
+  cancelVoice: $('cancel-voice-button'),
   settingsButton: $('settings-button'),
   settingsPanel: $('settings-panel'),
   pin: $('pin-button'),
@@ -37,6 +38,15 @@ const el = {
   resetProvider: $('reset-provider-button'),
   testLocal: $('test-local-button'),
   localStatus: $('local-status'),
+  voiceBaseUrl: $('voice-base-url-input'),
+  voiceModel: $('voice-model-input'),
+  saveVoice: $('save-voice-button'),
+  speechVoice: $('speech-voice-input'),
+  speechBaseUrl: $('speech-base-url-input'),
+  speechModel: $('speech-model-input'),
+  speechRate: $('speech-rate-input'),
+  speechPitch: $('speech-pitch-input'),
+  saveSpeech: $('save-speech-button'),
   keyStatus: $('key-status'),
   apiKey: $('api-key-input'),
   saveKey: $('save-key-button'),
@@ -149,13 +159,13 @@ function openSettings(open) {
 function showHotkeyState(hotkey) {
   if (document.activeElement !== el.hotkey) el.hotkey.value = hotkey.active || hotkey.requested;
   if (hotkey.status === 'active') {
-    el.hotkeyStatus.textContent = `${hotkey.active} shows and hides the panel.`;
+    el.hotkeyStatus.textContent = `${hotkey.active} opens the panel and records your voice while you hold it.`;
     // A warning about the shortcut that is still on screen no longer applies.
     if (lastHotkeyProblem !== '' && el.banner.textContent === lastHotkeyProblem) el.banner.hidden = true;
     lastHotkeyProblem = '';
     return;
   }
-  const working = hotkey.active ? '' : ' The panel has no working shortcut right now.';
+  const working = hotkey.active ? '' : ' Voice and the panel have no working shortcut right now.';
   const text = (hotkey.message || 'The shortcut is not registered.') + working;
   el.hotkeyStatus.textContent = text;
   // Tell the user once, prominently, in the main window.
@@ -183,6 +193,17 @@ bridge.on('app.state', (payload) => {
     el.overlayDotColor.value = payload.overlay.dot;
     el.overlayCaptionColor.value = payload.overlay.caption;
   }
+  // The state arrives for many reasons. A field the user is typing in is left alone.
+  const fill = (input, value) => {
+    if (document.activeElement !== input) input.value = value;
+  };
+  fill(el.voiceBaseUrl, payload.voice.base_url);
+  fill(el.voiceModel, payload.voice.model);
+  fill(el.speechVoice, payload.speech.voice);
+  fill(el.speechBaseUrl, payload.speech.base_url);
+  fill(el.speechModel, payload.speech.model);
+  fill(el.speechRate, payload.speech.rate);
+  fill(el.speechPitch, payload.speech.pitch);
 
   const active = providerById(payload.provider) || payload.providers[0];
   el.modelBadge.textContent = `${active.label} · ${active.model || 'no model'}`;
@@ -206,6 +227,28 @@ bridge.on('app.state', (payload) => {
   // The page is hidden until its first theme arrives, and a hidden element cannot take focus.
   // So the first focus has to happen here, after the reveal.
   if (firstState) focusInput();
+});
+
+// Voice: "listening" and "transcribing" stay on screen for as long as they are true, and go
+// away when the round ends. An error stays until something else replaces it.
+let voiceProgress = '';
+bridge.on('voice.state', (payload) => {
+  if (payload.state === 'listening' || payload.state === 'listening_toggle' ||
+      payload.state === 'transcribing') {
+    voiceProgress = payload.state === 'transcribing'
+      ? 'Transcribing…'
+      : payload.state === 'listening_toggle'
+        ? 'Listening… press the shortcut again to send.'
+        : 'Listening… hold the shortcut, then release to send.';
+    showBanner(voiceProgress, true);
+    return;
+  }
+  if (payload.state === 'error') {
+    showBanner(payload.error || 'Voice input failed.', true);
+  } else if (voiceProgress !== '' && el.banner.textContent === voiceProgress) {
+    el.banner.hidden = true;
+  }
+  voiceProgress = '';
 });
 
 bridge.on('chat.history', (payload) => {
@@ -327,6 +370,7 @@ el.newChat.addEventListener('click', () => {
   send('chat.clear', {});
   focusInput();
 });
+el.cancelVoice.addEventListener('click', () => send('voice.cancel', {}));
 
 el.themeSelect.addEventListener('change', () => {
   send('settings.set_theme', { theme: el.themeSelect.value });
@@ -367,6 +411,27 @@ el.testLocal.addEventListener('click', () => {
   const endpoint = el.baseUrl.value.trim();
   const model = el.model.value.trim();
   if (endpoint.length > 0 && model.length > 0) send('local.test_model', { endpoint, model });
+});
+el.saveVoice.addEventListener('click', () => {
+  const base_url = el.voiceBaseUrl.value.trim();
+  const model = el.voiceModel.value.trim();
+  if (base_url.length === 0 || model.length === 0) {
+    showBanner('Enter both the transcription server URL and its model.');
+    return;
+  }
+  send('settings.set_voice', { base_url, model });
+});
+el.saveSpeech.addEventListener('click', () => {
+  const rate = Math.max(-10, Math.min(10, Number.parseInt(el.speechRate.value, 10) || 0));
+  const pitch = Math.max(-10, Math.min(10, Number.parseInt(el.speechPitch.value, 10) || 0));
+  const base_url = el.speechBaseUrl.value.trim();
+  const model = el.speechModel.value.trim();
+  // The neural server is optional, but a URL without a model cannot be used.
+  if (base_url.length > 0 && model.length === 0) {
+    showBanner('Enter the neural speech model, or clear the URL to use Windows voices only.');
+    return;
+  }
+  send('settings.set_speech', { voice: el.speechVoice.value.trim(), base_url, model, rate, pitch });
 });
 
 el.saveKey.addEventListener('click', () => {

@@ -28,6 +28,7 @@ inline constexpr std::size_t kMaxChatTextBytes = 200 * 1000;
 inline constexpr std::size_t kMaxIdLength = 64;
 inline constexpr std::size_t kMaxModelLength = 128;
 inline constexpr std::size_t kMaxBaseUrlLength = 2048;
+inline constexpr std::size_t kMaxSpeechVoiceLength = 512;   // name of an installed Windows voice
 inline constexpr std::size_t kMaxApiKeyLength = 512;
 inline constexpr std::size_t kMaxLogLength = 2000;
 inline constexpr std::size_t kMaxHotkeyLength = 64;
@@ -43,6 +44,7 @@ struct ChatSend {                                    // "chat.send"            {
 };
 struct ChatCancel { std::string request_id; };       // "chat.cancel"          {request_id}
 struct ChatClear {};                                 // "chat.clear"           {}
+struct VoiceCancel {};                               // "voice.cancel"         {}
 struct SetTheme { std::string theme; };              // "settings.set_theme"   {theme}
 struct SetOverlayPalette {                           // "settings.set_overlay" {ring, dot, caption}
     std::string ring;
@@ -53,6 +55,17 @@ struct SetProvider {                                 // "settings.set_provider" 
     std::string provider;
     std::string base_url;
     std::string model;                               // may be empty: "not chosen yet"
+};
+struct SetVoice {                                    // "settings.set_voice"   {base_url, model}
+    std::string base_url;                            // the local speech-to-text server
+    std::string model;
+};
+struct SetSpeech {                                   // "settings.set_speech"  {voice, base_url, model, rate, pitch}
+    std::string voice;                               // an installed Windows voice; empty: the system default
+    std::string base_url;                            // optional local neural speech server; empty: not used
+    std::string model;                               // its model; empty when base_url is
+    int rate = 0;                                    // -10..10
+    int pitch = 0;                                   // -10..10
 };
 struct SetApiKey {                                   // "settings.set_api_key" {provider, key}
     std::string provider;
@@ -88,7 +101,9 @@ struct CaptureRequest {                              // "capture.request"     {t
     bool preview = true;
 };
 
-using UiMessage = std::variant<AppReady, ChatSend, ChatCancel, ChatClear, SetTheme, SetOverlayPalette, SetProvider,
+using UiMessage = std::variant<AppReady, ChatSend, ChatCancel, ChatClear, VoiceCancel, SetTheme, SetOverlayPalette, SetProvider,
+                               SetVoice,
+                               SetSpeech,
                                SetApiKey, ClearApiKey, UiLog, SetHotkey, SetPanel, WindowHide, OpenMain,
                                LocalTestModel, SetCapturePolicy, OverlayDebug, CaptureRequest>;
 
@@ -137,5 +152,7 @@ std::string host_error(std::string_view code, std::string_view message);        
 std::string local_test_result(std::string_view model, bool vision, std::string_view message); // "local.test_result"
 std::string capture_preview(std::string_view media_type, std::string_view base64,
                             int width, int height); // "capture.preview"
+// state: idle | listening | listening_toggle | transcribing | error
+std::string voice_state(std::string_view state, std::string_view error); // "voice.state"
 
 }  // namespace buddy::protocol

@@ -25,12 +25,26 @@ struct Settings {
     std::vector<ProviderConfig> providers;
 
     // Companion shell (M1.5).
-    std::string hotkey = "Alt+Shift+Space";   // global shortcut that toggles the floating panel
+    std::string hotkey = "Alt+Shift+Space";   // global shortcut: push-to-talk, and shows the panel
     int panel_width = 440;                    // remembered panel size, in DIPs (96 per inch)
     int panel_height = 560;
     bool hide_on_click_away = true;           // hide the panel when another window is clicked
     bool panel_pinned = false;                // pinned: stays open until hidden explicitly
-    bool muted = false;                       // tray "Mute"; silences spoken output once M3 adds it
+    bool muted = false;                       // tray "Mute"; silences spoken output
+
+    // Voice input: a speech-to-text server the user runs on this PC (loopback only). It is
+    // contacted only when the user records something with the voice shortcut.
+    std::string voice_base_url = "http://127.0.0.1:8000/v1";
+    std::string voice_model = "whisper-1";
+
+    // Spoken output. Windows' built-in voices are the default and need no server. A local neural
+    // speech server is optional: an empty speech_base_url means it is not used, so by default no
+    // reply text is posted anywhere to be spoken.
+    std::string speech_voice;                 // installed Windows voice; empty: the system default
+    std::string speech_base_url;              // loopback only
+    std::string speech_model;
+    int speech_rate = 0;                      // -10..10
+    int speech_pitch = 0;                     // -10..10
 
     // Capture is always user-triggered. These executable/window-name fragments are excluded
     // before a frame can be shown or sent, and preview remains required for remote endpoints.

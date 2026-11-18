@@ -47,6 +47,7 @@ const OUTGOING = {
     byteLength(p.text) <= MAX_CHAT_TEXT_BYTES,
   'chat.cancel': (p) => hasExactly(p, ['request_id']) && isId(p.request_id),
   'chat.clear': (p) => hasExactly(p, []),
+  'voice.cancel': (p) => hasExactly(p, []),
   'settings.set_theme': (p) => hasExactly(p, ['theme']) && isId(p.theme),
   'settings.set_overlay': (p) =>
     hasExactly(p, ['ring', 'dot', 'caption']) &&
@@ -60,6 +61,21 @@ const OUTGOING = {
     p.base_url.length > 0 &&
     typeof p.model === 'string' &&
     MODEL_RE.test(p.model),
+  'settings.set_voice': (p) =>
+    hasExactly(p, ['base_url', 'model']) &&
+    isString(p.base_url, MAX_BASE_URL) &&
+    p.base_url.length > 0 &&
+    typeof p.model === 'string' &&
+    MODEL_RE.test(p.model) &&
+    p.model.length > 0,
+  // base_url and model may be empty: no neural speech server, Windows voices only.
+  'settings.set_speech': (p) =>
+    hasExactly(p, ['voice', 'base_url', 'model', 'rate', 'pitch']) &&
+    isString(p.voice, 512) &&
+    isString(p.base_url, MAX_BASE_URL) &&
+    typeof p.model === 'string' && MODEL_RE.test(p.model) &&
+    Number.isInteger(p.rate) && p.rate >= -10 && p.rate <= 10 &&
+    Number.isInteger(p.pitch) && p.pitch >= -10 && p.pitch <= 10,
   'settings.set_api_key': (p) =>
     hasExactly(p, ['provider', 'key']) && isId(p.provider) && typeof p.key === 'string' && API_KEY_RE.test(p.key),
   'settings.clear_api_key': (p) => hasExactly(p, ['provider']) && isId(p.provider),
@@ -140,16 +156,27 @@ const isOverlayState = (o) =>
   isColor(o.ring) &&
   isColor(o.dot) &&
   isColor(o.caption);
+const isVoiceConfig = (v) =>
+  hasExactly(v, ['base_url', 'model']) && isString(v.base_url, MAX_BASE_URL) && isString(v.model, 128);
+const isSpeechConfig = (v) =>
+  hasExactly(v, ['voice', 'base_url', 'model', 'rate', 'pitch']) &&
+  isString(v.voice, 512) &&
+  isString(v.base_url, MAX_BASE_URL) &&
+  typeof v.model === 'string' && MODEL_RE.test(v.model) &&
+  Number.isInteger(v.rate) && v.rate >= -10 && v.rate <= 10 &&
+  Number.isInteger(v.pitch) && v.pitch >= -10 && v.pitch <= 10;
 
 const isHistoryMessage = (m) =>
   hasExactly(m, ['role', 'text']) && ['user', 'assistant'].includes(m.role) && isString(m.text);
 
 const INCOMING = {
   'app.state': (p) =>
-    hasExactly(p, ['app_version', 'themes', 'theme', 'provider', 'providers', 'busy', 'hotkey', 'panel', 'capture', 'muted', 'overlay']) &&
+    hasExactly(p, ['app_version', 'themes', 'theme', 'provider', 'providers', 'busy', 'hotkey', 'panel', 'capture', 'muted', 'voice', 'speech', 'overlay']) &&
     isHotkeyState(p.hotkey) &&
     isPanelState(p.panel) &&
     isOverlayState(p.overlay) &&
+    isVoiceConfig(p.voice) &&
+    isSpeechConfig(p.speech) &&
     isObject(p.capture) &&
     hasExactly(p.capture, ['exclusions', 'send_preview']) &&
     Array.isArray(p.capture.exclusions) &&
@@ -169,6 +196,10 @@ const INCOMING = {
     p.providers.length <= 32 &&
     p.providers.every(isProvider) &&
     isBool(p.busy),
+  'voice.state': (p) =>
+    hasExactly(p, ['state', 'error']) &&
+    ['idle', 'listening', 'listening_toggle', 'transcribing', 'error'].includes(p.state) &&
+    isString(p.error, 4000),
   'chat.started': (p) =>
     hasExactly(p, ['request_id', 'provider', 'model', 'text']) &&
     isId(p.request_id) &&

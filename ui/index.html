@@ -34,6 +34,7 @@
       <select id="theme-select" aria-label="Theme"></select>
     </label>
     <button type="button" class="btn" id="new-chat-button">New chat</button>
+    <button type="button" class="btn" id="cancel-voice-button">Cancel voice</button>
     <button type="button" class="btn main-only" id="settings-button" aria-expanded="false" aria-controls="settings-panel">Settings</button>
     <button type="button" class="btn panel-only" id="pin-button" aria-pressed="false" title="Keep the panel open when you click elsewhere">Pin</button>
     <button type="button" class="btn panel-only" id="open-main-button" title="Open the full Buddy window">Open</button>
@@ -79,6 +80,45 @@
       </div>
       <p class="hint" id="local-status">Select Local server, enter its localhost URL and model, then save.</p>
 
+      <h3>Voice input</h3>
+      <label class="field">
+        <span>Transcription server URL (on this PC)</span>
+        <input type="text" id="voice-base-url-input" spellcheck="false" autocomplete="off"
+               placeholder="http://127.0.0.1:8000/v1">
+      </label>
+      <label class="field">
+        <span>Transcription model</span>
+        <input type="text" id="voice-model-input" spellcheck="false" autocomplete="off" placeholder="whisper-1">
+      </label>
+      <button type="button" class="btn btn-primary" id="save-voice-button">Save voice settings</button>
+      <p class="hint">Hold the voice shortcut while you speak and release it to send. A quick tap starts recording until you press the shortcut again. Recordings go only to this server, which must run on this PC.</p>
+
+      <h3>Speech output</h3>
+      <label class="field">
+        <span>Windows voice</span>
+        <input type="text" id="speech-voice-input" spellcheck="false" autocomplete="off"
+               placeholder="Blank uses the system default">
+      </label>
+      <label class="field">
+        <span>Speaking rate (-10 to 10)</span>
+        <input type="number" id="speech-rate-input" min="-10" max="10" step="1">
+      </label>
+      <label class="field">
+        <span>Pitch (-10 to 10)</span>
+        <input type="number" id="speech-pitch-input" min="-10" max="10" step="1">
+      </label>
+      <label class="field">
+        <span>Neural speech server URL (optional, on this PC)</span>
+        <input type="text" id="speech-base-url-input" spellcheck="false" autocomplete="off"
+               placeholder="Blank uses Windows voices only">
+      </label>
+      <label class="field">
+        <span>Neural speech model</span>
+        <input type="text" id="speech-model-input" spellcheck="false" autocomplete="off">
+      </label>
+      <button type="button" class="btn btn-primary" id="save-speech-button">Save speech settings</button>
+      <p class="hint">Replies are read aloud with a Windows voice, named as in Windows speech settings (for example "Microsoft Zira Desktop"). If you run an OpenAI-compatible speech server on this PC, enter its URL and model to use it instead; the Windows voice then takes over whenever that server does not answer. Rate and pitch apply to Windows voices.</p>
+
       <h3>API key</h3>
       <p class="hint" id="key-status">No key stored.</p>
       <label class="field">
@@ -93,7 +133,7 @@
 
       <h3>Floating panel</h3>
       <label class="field">
-        <span>Shortcut that shows and hides the panel</span>
+        <span>Voice shortcut</span>
         <input type="text" id="hotkey-input" spellcheck="false" autocomplete="off" placeholder="Alt+Shift+Space">
       </label>
       <div class="row">

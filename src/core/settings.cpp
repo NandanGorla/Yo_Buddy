@@ -144,6 +144,53 @@ Settings from_json(std::string_view text, std::vector<std::string>* warnings) {
         s.panel_height = clamped.height;
     }
     if (const auto it = root.find("muted"); it != root.end() && it->is_boolean()) s.muted = it->get<bool>();
+    if (const auto it = root.find("voice"); it != root.end() && it->is_object()) {
+        if (const auto base = it->find("base_url"); base != it->end() && base->is_string()) {
+            const url::BaseUrlResult parsed = url::parse_base_url(base->get_ref<const std::string&>());
+            if (parsed.ok() && url::is_loopback_host(parsed.url->host)) s.voice_base_url = parsed.url->to_string();
+            else warn(warnings, "ignored invalid voice base_url");
+        }
+        if (const auto model = it->find("model"); model != it->end()) {
+            // json::empty() is false for every string, so the value itself has to be checked.
+            const std::string* value = model->get_ptr<const std::string*>();
+            if (value && !value->empty() && protocol::is_valid_model(*value)) {
+                s.voice_model = *value;
+            } else {
+                warn(warnings, "ignored invalid voice model");
+            }
+        }
+    }
+    if (const auto it = root.find("speech"); it != root.end() && it->is_object()) {
+        if (const auto voice = it->find("voice"); voice != it->end()) {
+            const std::string* value = voice->get_ptr<const std::string*>();
+            if (value && value->size() <= protocol::kMaxSpeechVoiceLength) s.speech_voice = *value;
+            else warn(warnings, "ignored invalid speech voice");
+        }
+        // An empty base_url is a real choice: no neural server, Windows voices only.
+        if (const auto base = it->find("base_url"); base != it->end()) {
+            const std::string* value = base->get_ptr<const std::string*>();
+            if (value && value->empty()) {
+                s.speech_base_url.clear();
+            } else if (value) {
+                const url::BaseUrlResult parsed = url::parse_base_url(*value);
+                if (parsed.ok() && url::is_loopback_host(parsed.url->host)) s.speech_base_url = parsed.url->to_string();
+                else warn(warnings, "ignored invalid speech base_url");
+            } else {
+                warn(warnings, "ignored invalid speech base_url");
+            }
+        }
+        if (const auto model = it->find("model"); model != it->end()) {
+            const std::string* value = model->get_ptr<const std::string*>();
+            if (value && protocol::is_valid_model(*value)) s.speech_model = *value;
+            else warn(warnings, "ignored invalid speech model");
+        }
+        if (const auto rate = it->find("rate"); rate != it->end() && rate->is_number_integer()) {
+            s.speech_rate = static_cast<int>(std::clamp<std::int64_t>(rate->get<std::int64_t>(), -10, 10));
+        }
+        if (const auto pitch = it->find("pitch"); pitch != it->end() && pitch->is_number_integer()) {
+            s.speech_pitch = static_cast<int>(std::clamp<std::int64_t>(pitch->get<std::int64_t>(), -10, 10));
+        }
+    }
     if (const auto it = root.find("overlay"); it != root.end() && it->is_object()) {
         const auto read_color = [&](const char* key, std::string& out) {
             const auto value = it->find(key);
@@ -208,6 +255,13 @@ std::string to_json(const Settings& settings) {
                          {"hide_on_click_away", settings.hide_on_click_away},
                          {"pinned", settings.panel_pinned}}},
                        {"muted", settings.muted},
+                       {"voice", {{"base_url", settings.voice_base_url}, {"model", settings.voice_model}}},
+                       {"speech",
+                        {{"voice", settings.speech_voice},
+                         {"base_url", settings.speech_base_url},
+                         {"model", settings.speech_model},
+                         {"rate", settings.speech_rate},
+                         {"pitch", settings.speech_pitch}}},
                        {"overlay",
                         {{"ring", settings.overlay_ring_color},
                          {"dot", settings.overlay_dot_color},

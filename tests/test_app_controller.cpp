@@ -71,6 +71,9 @@ struct Harness {
     } registrar;
     std::vector<ViewId> hidden;
     std::vector<bool> opened_main;
+    std::vector<std::string> spoken;     // what the controller asked to have read aloud
+    std::vector<std::string> captions;   // overlay captions from finished replies
+    int voice_cancels = 0;
 
     explicit Harness(const std::string& name) {
         dir = std::filesystem::temp_directory_path() / ("buddy-test-controller-" + name);
@@ -100,6 +103,9 @@ struct Harness {
         deps.hotkeys = &registrar;
         deps.hide_window = [this](ViewId view) { hidden.push_back(view); };
         deps.open_main = [this](bool settings) { opened_main.push_back(settings); };
+        deps.speak = [this](std::string text) { spoken.push_back(std::move(text)); };
+        deps.show_caption = [this](std::string text) { captions.push_back(std::move(text)); };
+        deps.cancel_voice = [this] { ++voice_cancels; };
         controller = std::make_unique<AppController>(std::move(deps));
     }
 
@@ -153,9 +159,9 @@ void script_reply(FakeTransport& transport, const std::vector<std::string>& piec
     transport.chunks.clear();
     transport.chunks.push_back(sse(R"({"type":"message_start","message":{"usage":{"input_tokens":20}}})"));
     for (const std::string& piece : pieces) {
-        transport.chunks.push_back(
-            sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":")" +
-                piece + R"("}})"));
+        transport.chunks.push_back(sse(
+            R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":)" +
+            json(piece).dump() + R"(}})"));
     }
 
     transport.chunks.push_back(
@@ -165,7 +171,7 @@ void script_reply(FakeTransport& transport, const std::vector<std::string>& piec
 
 void script_openai_reply(FakeTransport& transport, const std::vector<std::string>& pieces) {
     transport.chunks.clear();
-    for (const std::string& piece : pieces) transport.chunks.push_back(text_chunk(piece));
+    for (const std::string& piece : pieces) transport.chunks.push_back(text_chunk_raw(piece));
     transport.chunks.push_back(finish_chunk("stop"));
     transport.chunks.push_back(usage_chunk(20, 5));
     transport.chunks.push_back(done_marker());
@@ -615,4 +621,212 @@ TEST_CASE("controller: window requests name the window they came from", "[contro
     h.ui("window.open_main", {{"settings", false}}, ViewId::Panel);
     CHECK(h.opened_main == std::vector<bool>{true, false});
     CHECK(h.sent.empty());   // these only act on windows; nothing is sent back
+}
+
+// ---- voice (M3) ----
+
+TEST_CASE("controller: the state carries the voice and speech settings", "[controller][voice]") {
+    Harness h("voice-state");
+    h.ui("app.ready");
+    const json state = h.of_type("app.state").back();
+    CHECK(state["voice"] == json{{"base_url", "http://127.0.0.1:8000/v1"}, {"model", "whisper-1"}});
+    // No neural speech server by default: replies are read by a Windows voice, on this PC.
+    CHECK(state["speech"] == json{{"voice", ""}, {"base_url", ""}, {"model", ""}, {"rate", 0}, {"pitch", 0}});
+}
+
+TEST_CASE("controller: the transcription server must be on this PC", "[controller][voice]") {
+    Harness h("voice-settings");
+    h.ui("settings.set_voice", {{"base_url", "https://example.com/v1"}, {"model", "whisper-1"}});
+    REQUIRE(h.has("host.error"));
+    CHECK(h.of_type("host.error").back()["code"] == "invalid_voice_endpoint");
+    CHECK(h.controller->settings().voice_base_url == "http://127.0.0.1:8000/v1");
+
+    h.ui("settings.set_voice", {{"base_url", "not a url"}, {"model", "whisper-1"}});
+    CHECK(h.of_type("host.error").size() == 2);
+    CHECK(h.controller->settings().voice_base_url == "http://127.0.0.1:8000/v1");
+
+    h.sent.clear();
+    h.ui("settings.set_voice", {{"base_url", "http://localhost:9000/v1"}, {"model", "small.en"}});
+    CHECK_FALSE(h.has("host.error"));
+    CHECK(h.of_type("app.state").back()["voice"] == json{{"base_url", "http://localhost:9000/v1"}, {"model", "small.en"}});
+
+    h.make_controller();   // a restart: the choice was saved
+    CHECK(h.controller->settings().voice_base_url == "http://localhost:9000/v1");
+    CHECK(h.controller->settings().voice_model == "small.en");
+}
+
+TEST_CASE("controller: speech settings, with an optional neural server on this PC", "[controller][voice]") {
+    Harness h("speech-settings");
+    const auto speech = [](const json& changes) {
+        json payload = {{"voice", ""}, {"base_url", ""}, {"model", ""}, {"rate", 0}, {"pitch", 0}};
+        payload.update(changes);
+        return payload;
+    };
+
+    SECTION("Windows voices only") {
+        h.ui("settings.set_speech", speech({{"voice", "  Microsoft Zira Desktop "}, {"rate", 2}, {"pitch", -1}}));
+        CHECK_FALSE(h.has("host.error"));
+        const auto& s = h.controller->settings();
+        CHECK(s.speech_voice == "Microsoft Zira Desktop");
+        CHECK(s.speech_base_url.empty());
+        CHECK(s.speech_rate == 2);
+        CHECK(s.speech_pitch == -1);
+    }
+    SECTION("a neural server on this PC") {
+        h.ui("settings.set_speech", speech({{"base_url", "http://127.0.0.1:8880/v1"}, {"model", "kokoro"}}));
+        CHECK_FALSE(h.has("host.error"));
+        h.make_controller();
+        CHECK(h.controller->settings().speech_base_url == "http://127.0.0.1:8880/v1");
+        CHECK(h.controller->settings().speech_model == "kokoro");
+
+        // And switching it off again.
+        h.ui("settings.set_speech", speech(json::object()));
+        CHECK(h.controller->settings().speech_base_url.empty());
+    }
+    SECTION("a remote server is refused") {
+        h.ui("settings.set_speech", speech({{"base_url", "https://example.com/v1"}, {"model", "tts-1"}, {"rate", 5}}));
+        REQUIRE(h.has("host.error"));
+        CHECK(h.of_type("host.error").back()["code"] == "invalid_speech_endpoint");
+        CHECK(h.controller->settings().speech_base_url.empty());
+        CHECK(h.controller->settings().speech_rate == 0);   // nothing from a refused message is kept
+    }
+    SECTION("a server without a model is refused") {
+        h.ui("settings.set_speech", speech({{"base_url", "http://127.0.0.1:8880/v1"}}));
+        REQUIRE(h.has("host.error"));
+        CHECK(h.of_type("host.error").back()["code"] == "invalid_speech_endpoint");
+        CHECK(h.controller->settings().speech_base_url.empty());
+    }
+}
+
+TEST_CASE("controller: a spoken question is sent like a typed one", "[controller][voice]") {
+    Harness h("voice-submit");
+    h.credentials.entries["apikey/anthropic"] = "sk-ant-test";
+    script_reply(h.transport, {"Hi"});
+
+    h.controller->submit_voice_text("  what is a mutex \n");
+    REQUIRE(h.wait_for_reply());
+    const auto started = h.of_type("chat.started");
+    REQUIRE(started.size() == 1);
+    CHECK(started[0]["request_id"] == "voice_1");
+    CHECK(started[0]["text"] == "what is a mutex");
+    CHECK(h.last_request_body()["messages"][0] == json{{"role", "user"}, {"content", "what is a mutex"}});
+    CHECK(h.has("chat.done"));
+    CHECK_FALSE(h.has("voice.state"));
+
+    // Each spoken question gets its own request id.
+    h.sent.clear();
+    script_reply(h.transport, {"Again"});
+    h.controller->submit_voice_text("and a semaphore");
+    REQUIRE(h.wait_for_reply());
+    CHECK(h.of_type("chat.started")[0]["request_id"] == "voice_2");
+
+    // Silence transcribed as blank text is not a question.
+    h.sent.clear();
+    h.controller->submit_voice_text(" \n ");
+    CHECK(h.sent.empty());
+}
+
+TEST_CASE("controller: a spoken question that cannot be sent says why", "[controller][voice]") {
+    SECTION("no API key") {
+        Harness h("voice-refused");
+        h.controller->submit_voice_text("hello");
+        // No window sent this request, so the reason must not go out as a chat.error that every
+        // window would ignore.
+        CHECK_FALSE(h.has("chat.started"));
+        CHECK_FALSE(h.has("chat.error"));
+        const auto states = h.of_type("voice.state");
+        REQUIRE(states.size() == 1);
+        CHECK(states[0]["state"] == "error");
+        CHECK(states[0]["error"].get<std::string>().find("API key") != std::string::npos);
+        CHECK(h.transport.calls == 0);
+    }
+    SECTION("a reply is still running") {
+        Harness h("voice-busy");
+        h.credentials.entries["apikey/anthropic"] = "k";
+        h.transport.chunks = {
+            sse(R"({"type":"message_start","message":{"usage":{"input_tokens":1}}})") +
+                sse(R"({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}})") +
+                sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}})"),
+            sse(R"({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"never"}})")};
+        h.transport.block_after_first_chunk = true;
+        h.ui("chat.send", {{"request_id", "r1"}, {"text", "long question"}});
+        REQUIRE(h.pump_until([&] { return h.has("chat.delta"); }));
+
+        h.controller->submit_voice_text("impatient");
+        const auto states = h.of_type("voice.state");
+        REQUIRE(states.size() == 1);
+        CHECK(states[0]["state"] == "error");
+        CHECK(states[0]["error"].get<std::string>().find("already in progress") != std::string::npos);
+        CHECK(h.of_type("chat.started").size() == 1);   // only the typed one
+
+        h.ui("chat.cancel", {{"request_id", "r1"}});
+        REQUIRE(h.pump_until([&] { return h.has("chat.done"); }));
+    }
+}
+
+TEST_CASE("controller: a finished reply is read aloud, unless muted", "[controller][voice]") {
+    Harness h("speak");
+    h.credentials.entries["apikey/anthropic"] = "sk-ant-test";
+
+    script_reply(h.transport, {"Hello", " ", "world"});
+    h.ui("chat.send", {{"request_id", "r1"}, {"text", "say hello"}});
+    REQUIRE(h.wait_for_reply());
+    CHECK(h.spoken == std::vector<std::string>{"Hello world"});
+    CHECK(h.captions == std::vector<std::string>{"Hello world"});
+
+    h.controller->set_muted(true);
+    h.sent.clear();
+    script_reply(h.transport, {"Quiet"});
+    h.ui("chat.send", {{"request_id", "r2"}, {"text", "again"}});
+    REQUIRE(h.wait_for_reply());
+    CHECK(h.spoken.size() == 1);   // nothing new
+    CHECK(h.captions == std::vector<std::string>{"Hello world", "Quiet"});
+}
+
+TEST_CASE("controller: markdown replies are spoken as plain text", "[controller][voice]") {
+    Harness h("speak-markdown");
+    h.credentials.entries["apikey/anthropic"] = "sk-ant-test";
+    script_reply(h.transport, {"Click **File**, then New."});
+    h.ui("chat.send", {{"request_id", "r1"}, {"text", "where"}});
+    REQUIRE(h.wait_for_reply());
+    CHECK(h.spoken == std::vector<std::string>{"Click File, then New."});
+    CHECK(h.captions == std::vector<std::string>{"Click File, then New."});
+}
+
+TEST_CASE("controller: a code reply is spoken but not captioned", "[controller][voice]") {
+    Harness h("speak-code");
+    h.credentials.entries["apikey/anthropic"] = "sk-ant-test";
+    script_reply(h.transport, {"Sure.\n```cpp\nint x = 1;\n```\n"});
+    h.ui("chat.send", {{"request_id", "r1"}, {"text", "code"}});
+    REQUIRE(h.wait_for_reply());
+    CHECK(h.spoken == std::vector<std::string>{"Sure."});
+    CHECK(h.captions.empty());
+}
+
+TEST_CASE("controller: overlay debug captions are read aloud unless muted", "[controller][voice]") {
+    Harness h("debug-caption");
+    h.ui("overlay.debug", {{"action", "caption"}, {"caption", "Look here"}});
+    CHECK(h.spoken == std::vector<std::string>{"Look here"});
+
+    h.controller->set_muted(true);
+    h.ui("overlay.debug", {{"action", "caption"}, {"caption", "Silent"}});
+    CHECK(h.spoken.size() == 1);
+}
+
+TEST_CASE("controller: a failed reply is not read aloud", "[controller][voice]") {
+    Harness h("speak-failure");
+    h.credentials.entries["apikey/anthropic"] = "wrong";
+    h.transport.status = 401;
+    h.transport.content_type = "application/json";
+    h.transport.chunks = {R"({"error":{"message":"invalid x-api-key"}})"};
+    h.ui("chat.send", {{"request_id", "r1"}, {"text", "question"}});
+    REQUIRE(h.wait_for_reply());
+    CHECK(h.spoken.empty());
+}
+
+TEST_CASE("controller: voice.cancel reaches the shell", "[controller][voice]") {
+    Harness h("voice-cancel");
+    h.ui("voice.cancel", json::object(), ViewId::Panel);
+    CHECK(h.voice_cancels == 1);
+    CHECK(h.sent.empty());
 }

@@ -5,6 +5,8 @@
 #include <thread>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "providers/http.h"
 
 namespace buddy::test {
@@ -60,6 +62,11 @@ inline std::string sse(const std::string& data) { return "data: " + data + "\n\n
 inline std::string text_chunk(const std::string& json_escaped_text) {
     return sse(R"({"id":"c1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":")" +
                json_escaped_text + R"("},"finish_reason":null}]})");
+}
+
+inline std::string text_chunk_raw(const std::string& text) {
+    const std::string encoded = nlohmann::json(text).dump();
+    return text_chunk(encoded.substr(1, encoded.size() - 2));
 }
 
 inline std::string finish_chunk(const std::string& reason) {

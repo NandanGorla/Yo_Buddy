@@ -84,6 +84,7 @@ public:
     const std::string& requested() const { return requested_; }   // text of the latest request
     const std::string& message() const { return message_; }   // user-facing detail when not Active
     std::string active() const;                               // the live binding, or "" when none
+    std::optional<Binding> active_binding() const { return active_; }
     int active_id() const { return active_id_; }              // id carried by WM_HOTKEY, 0 when none
 
 private:

@@ -6,8 +6,10 @@
 #include <windows.h>
 
 #include "app/tutor_prompt.h"
+#include "core/caption.h"
 #include "core/log.h"
 #include "core/placement.h"
+#include "core/text.h"
 #include "core/url.h"
 #include "providers/anthropic.h"
 #include "providers/openai_compat.h"
@@ -99,6 +101,15 @@ void AppController::send_state() const {
                                {{"exclusions", settings_.capture_exclusions},
                                 {"send_preview", settings_.capture_send_preview}}},
                               {"muted", settings_.muted},
+                              {"voice",
+                               {{"base_url", settings_.voice_base_url},
+                                {"model", settings_.voice_model}}},
+                              {"speech",
+                               {{"voice", settings_.speech_voice},
+                                {"base_url", settings_.speech_base_url},
+                                {"model", settings_.speech_model},
+                                {"rate", settings_.speech_rate},
+                                {"pitch", settings_.speech_pitch}}},
                               {"overlay",
                                {{"ring", settings_.overlay_ring_color},
                                 {"dot", settings_.overlay_dot_color},
@@ -123,6 +134,10 @@ void AppController::handle_ui_message(std::string_view json_text, ViewId source)
 void AppController::on_message(const protocol::AppReady&) {
     send_state();
     send_history();   // a window that has just loaded needs the conversation so far
+}
+
+void AppController::on_message(const protocol::VoiceCancel&) {
+    if (deps_.cancel_voice) deps_.cancel_voice();
 }
 
 void AppController::on_message(const protocol::CaptureRequest& request) {
@@ -205,6 +220,10 @@ std::string AppController::hotkey_message() const { return hotkey_ ? hotkey_->me
 
 std::string AppController::hotkey_active() const { return hotkey_ ? hotkey_->active() : std::string(); }
 
+std::optional<hotkey::Binding> AppController::hotkey_binding() const {
+    return hotkey_ ? hotkey_->active_binding() : std::nullopt;
+}
+
 void AppController::set_panel_size(int width_dip, int height_dip) {
     const placement::Size clamped = placement::clamp_panel_size({width_dip, height_dip});
     if (clamped.width == settings_.panel_width && clamped.height == settings_.panel_height) return;
@@ -225,6 +244,17 @@ void AppController::set_muted(bool muted) {
     settings_.muted = muted;
     save_settings();
     send_state();
+}
+
+void AppController::submit_voice_text(std::string_view spoken) {
+    const std::string text = text::truncate_utf8(text::trim_ascii(spoken), protocol::kMaxChatTextBytes);
+    if (text.empty()) return;
+    const std::string request_id = "voice_" + std::to_string(next_voice_request_++);
+    if (const auto refusal = begin_chat(request_id, text)) {
+        // No window sent this request, so none of them would show a chat.error for it. Every
+        // window shows the voice state, so the reason goes there.
+        send(protocol::voice_state("error", refusal->message + " Your spoken question was not sent."));
+    }
 }
 
 void AppController::on_message(const protocol::SetHotkey& m) {
@@ -260,6 +290,9 @@ void AppController::on_message(const protocol::SetCapturePolicy& m) {
 
 void AppController::on_message(const protocol::OverlayDebug& m) {
     log::info("overlay.debug received action=" + m.action);
+    if (m.action == "caption" && !settings_.muted && deps_.speak && !m.caption.empty()) {
+        deps_.speak(caption::for_speech(m.caption));
+    }
     if (!deps_.overlay_debug) {
         log::warn("overlay.debug ignored: overlay callback is not installed");
         return;
@@ -338,6 +371,7 @@ void AppController::on_message(const protocol::SetProvider& m) {
         send(protocol::host_error("unknown_provider", "That provider is not available."));
         return;
     }
+
     const url::BaseUrlResult parsed = url::parse_base_url(m.base_url);
     if (!parsed.ok()) {
         send(protocol::host_error("invalid_base_url", parsed.error));
@@ -346,6 +380,54 @@ void AppController::on_message(const protocol::SetProvider& m) {
     provider->base_url = parsed.url->to_string();
     provider->model = m.model;
     settings_.provider = provider->id;
+    save_settings();
+    send_state();
+}
+
+void AppController::on_message(const protocol::SetVoice& m) {
+    const url::BaseUrlResult parsed = url::parse_base_url(m.base_url);
+    if (!parsed.ok()) {
+        send(protocol::host_error("invalid_voice_endpoint", parsed.error));
+        return;
+    }
+    // Recorded speech never leaves this PC.
+    if (!url::is_loopback_host(parsed.url->host)) {
+        send(protocol::host_error("invalid_voice_endpoint",
+                                  "The transcription server must be on this PC (a localhost URL)."));
+        return;
+    }
+    settings_.voice_base_url = parsed.url->to_string();
+    settings_.voice_model = m.model;
+    save_settings();
+    send_state();
+}
+
+void AppController::on_message(const protocol::SetSpeech& m) {
+    // The neural server is optional. An empty URL means Windows voices only.
+    std::string base_url;
+    if (!m.base_url.empty()) {
+        const url::BaseUrlResult parsed = url::parse_base_url(m.base_url);
+        if (!parsed.ok()) {
+            send(protocol::host_error("invalid_speech_endpoint", parsed.error));
+            return;
+        }
+        if (!url::is_loopback_host(parsed.url->host)) {
+            send(protocol::host_error("invalid_speech_endpoint",
+                                      "The neural speech server must be on this PC (a localhost URL)."));
+            return;
+        }
+        if (m.model.empty()) {
+            send(protocol::host_error("invalid_speech_endpoint",
+                                      "Enter the neural speech model, or clear the URL to use Windows voices only."));
+            return;
+        }
+        base_url = parsed.url->to_string();
+    }
+    settings_.speech_voice = std::string(text::trim_ascii(m.voice));
+    settings_.speech_base_url = std::move(base_url);
+    settings_.speech_model = m.model;
+    settings_.speech_rate = m.rate;
+    settings_.speech_pitch = m.pitch;
     save_settings();
     send_state();
 }
@@ -390,42 +472,40 @@ void AppController::on_message(const protocol::ChatCancel& m) {
 }
 
 void AppController::on_message(const protocol::ChatSend& m) {
-    if (busy_) {
-        send(protocol::chat_error(m.request_id, "busy", "A reply is already in progress."));
-        return;
+    if (const auto refusal = begin_chat(m.request_id, m.text)) {
+        send(protocol::chat_error(m.request_id, refusal->code, refusal->message));
     }
+}
+
+// Starts a reply to `text`. Returns why not when the request cannot be started; nothing has been
+// sent to the UI in that case, so the caller decides where the reason is shown.
+std::optional<AppController::ChatRefusal> AppController::begin_chat(const std::string& request_id,
+                                                                    const std::string& text) {
+    if (busy_) return ChatRefusal{"busy", "A reply is already in progress."};
     const settings::ProviderConfig provider = settings_.active();
     if (provider.model.empty()) {
-        send(protocol::chat_error(m.request_id, "not_configured",
-                                  "No model is selected for " + provider.label + ". Choose one in Settings."));
-        return;
+        return ChatRefusal{"not_configured", "No model is selected for " + provider.label + ". Choose one in Settings."};
     }
     const url::BaseUrlResult endpoint = url::parse_base_url(provider.base_url);
-    if (!endpoint.ok()) {
-        send(protocol::chat_error(m.request_id, "not_configured", endpoint.error));
-        return;
-    }
+    if (!endpoint.ok()) return ChatRefusal{"not_configured", endpoint.error};
     std::string api_key;
     if (deps_.credentials) {
         if (auto stored = deps_.credentials->get(key_name(provider.id))) api_key = std::move(*stored);
     }
     // A server on this PC may need no key. Anything else does.
     if (api_key.empty() && !url::is_loopback_host(endpoint.url->host)) {
-        send(protocol::chat_error(m.request_id, "not_configured",
-                                  "Add an API key for " + provider.label + " in Settings."));
-        return;
+        return ChatRefusal{"not_configured", "Add an API key for " + provider.label + " in Settings."};
     }
     if (!deps_.transport || !deps_.run_on_ui) {
-        send(protocol::chat_error(m.request_id, "bad_response", "The app is not fully initialised."));
-        return;
+        return ChatRefusal{"bad_response", "The app is not fully initialised."};
     }
 
-    conversation_.push_back({Role::User, m.text});
+    conversation_.push_back({Role::User, text});
     busy_ = true;
-    active_request_ = m.request_id;
+    active_request_ = request_id;
     reply_so_far_.clear();
     active_model_ = provider.model;
-    send(protocol::chat_started(m.request_id, provider.id, provider.model, m.text));
+    send(protocol::chat_started(request_id, provider.id, provider.model, text));
 
     // Everything the worker needs is copied in, so it shares no mutable state with this thread.
     std::vector<ChatMessage> messages;
@@ -447,7 +527,7 @@ void AppController::on_message(const protocol::ChatSend& m) {
         [this, alive = alive_, transport = deps_.transport, run_on_ui = deps_.run_on_ui,
          provider_id = provider.id, base_url = endpoint.url->to_string(), api_key = std::move(api_key), messages = std::move(messages),
          images = std::move(images),
-         options, request_id = m.request_id](std::stop_token stop) {
+         options, request_id](std::stop_token stop) {
             auto buffer = std::make_shared<DeltaBuffer>();
 
             ChatSink sink;
@@ -482,6 +562,7 @@ void AppController::on_message(const protocol::ChatSend& m) {
                 finish_chat(request_id, result);
             });
         });
+    return std::nullopt;
 }
 
 void AppController::flush_deltas(const std::string& request_id, DeltaBuffer& buffer) {
@@ -503,6 +584,7 @@ void AppController::finish_chat(const std::string& request_id, const ChatResult&
 
     // Keep the turn in the history when there is something to keep. A request that produced no
     // text is dropped again, so the next attempt does not send the same user message twice.
+    const std::string spoken_reply = reply_so_far_;
     if (!reply_so_far_.empty()) {
         conversation_.push_back({Role::Assistant, reply_so_far_});
     } else if (!conversation_.empty() && conversation_.back().role == Role::User) {
@@ -511,6 +593,16 @@ void AppController::finish_chat(const std::string& request_id, const ChatResult&
     reply_so_far_.clear();
 
     if (result.status == ChatStatus::Ok || result.status == ChatStatus::Cancelled) {
+        if (result.status == ChatStatus::Ok && !spoken_reply.empty()) {
+            if (deps_.show_caption) {
+                const std::string overlay = caption::for_overlay(spoken_reply);
+                if (!overlay.empty()) deps_.show_caption(overlay);
+            }
+            if (!settings_.muted && deps_.speak) {
+                const std::string spoken = caption::for_speech(spoken_reply);
+                if (!spoken.empty()) deps_.speak(spoken);
+            }
+        }
         send(protocol::chat_done(request_id, result.stop_reason, result.input_tokens, result.output_tokens));
     } else {
         log::warn(std::string("chat failed: ") + to_code(result.status) + ", HTTP " +

@@ -2,7 +2,7 @@
 //
 // Buddy lives in the notification area ("tray"). A hidden host window owns the tray icon, the
 // global hotkey and the single-instance handshake. Two windows show the web UI:
-//   - the floating panel, toggled by the hotkey (app/panel_window.*)
+//   - the floating panel, shown by the voice hotkey (app/panel_window.*)
 //   - the main window with chat and settings, opened from the tray (app/main_window.*)
 // Both are views of the same AppController, so they always show the same conversation.
 
@@ -18,13 +18,18 @@
 #include "app/main_window.h"
 #include "app/overlay_window.h"
 #include "app/panel_window.h"
+#include "app/voice_session.h"
 #include "app/win_util.h"
 #include "core/hotkey.h"
 #include "core/log.h"
+#include "core/push_to_talk.h"
 #include "platform/credential_store.h"
 #include "platform/paths.h"
+#include "platform/sapi_voice.h"
+#include "platform/wasapi_recorder.h"
 #include "platform/win_text.h"
 #include "platform/winhttp_transport.h"
+#include "providers/transcription.h"
 
 #ifndef BUDDY_VERSION
 #define BUDDY_VERSION "0.0.0"
@@ -39,7 +44,11 @@ constexpr UINT kCmdOpen = 1001;
 constexpr UINT kCmdSettings = 1002;
 constexpr UINT kCmdMute = 1003;
 constexpr UINT kCmdQuit = 1004;
+constexpr UINT kCmdCancelVoice = 1005;
 constexpr UINT kTrayIconId = 1;
+// Runs only while the microphone is recording.
+constexpr UINT_PTR kVoiceTimer = 7;
+constexpr UINT kVoicePollMs = 16;
 
 // The real RegisterHotKey behind hotkey::IRegistrar.
 class WinHotkeyRegistrar final : public hotkey::IRegistrar {
@@ -94,6 +103,7 @@ public:
         dispatcher_->attach(host_);
         registrar_.attach(host_);
         transport_ = std::make_unique<WinHttpTransport>(win::widen(std::string("Buddy/") + BUDDY_VERSION));
+        speech_ = std::make_unique<SapiVoice>(transport_.get());
         credentials_ = std::make_unique<WinCredentialStore>(profile_.empty() ? L"Buddy/" : L"Buddy-" + profile_ + L"/");
 
         AppController::Deps deps;
@@ -102,11 +112,7 @@ public:
         deps.settings_path = paths::data_dir() / L"settings.json";
         deps.theme_folders = {paths::exe_dir() / L"themes", paths::data_dir() / L"themes"};
         deps.app_version = BUDDY_VERSION;
-        deps.send_to_ui = [this](const std::string& json) {
-            // Every window shows the same state, so every message goes to both.
-            if (main_) main_->post(json);
-            if (panel_) panel_->post(json);
-        };
+        deps.send_to_ui = [this](const std::string& json) { post_ui(json); };
         deps.run_on_ui = [dispatcher = dispatcher_](std::function<void()> task) { dispatcher->post(std::move(task)); };
         deps.hotkeys = &registrar_;
         deps.hide_window = [this](ViewId view) {
@@ -117,6 +123,13 @@ public:
             }
         };
         deps.open_main = [this](bool settings) { open_main(settings); };
+        deps.speak = [this](std::string text) {
+            if (speech_) speech_->speak(std::move(text));
+        };
+        deps.show_caption = [this](std::string text) {
+            if (overlay_) overlay_->set_caption(win::widen(text));
+        };
+        deps.cancel_voice = [this] { cancel_voice(); };
         deps.overlay_debug = [this](const protocol::OverlayDebug& command) {
             if (!overlay_) {
                 log::warn("overlay.debug ignored: overlay window is not constructed");
@@ -154,7 +167,7 @@ public:
                 overlay_->set_palette(overlay.overlay_ring_color, overlay.overlay_dot_color,
                                       overlay.overlay_caption_color);
             }
-            sync_shell();   // the message may have changed the theme, the panel options or mute
+            sync_shell();   // the message may have changed the theme, the panel options or voice
         };
         services.theme = [this]() -> const theme::Theme& { return controller_->active_theme(); };
 
@@ -167,6 +180,21 @@ public:
                               overlay_settings.overlay_caption_color);
         panel_->on_resized([this](placement::Size size) { controller_->set_panel_size(size.width, size.height); });
         if (!panel_->create()) log::error("could not create the floating panel");
+
+        // Voice: the microphone, the speech-to-text server on this PC, and the session that
+        // ties them to the shortcut. sync_shell() below gives them the stored settings.
+        recorder_ = std::make_unique<WasapiRecorder>();
+        transcriber_ = std::make_unique<LocalTranscriber>(*transport_, TranscriptionConfig{});
+        voice_ = std::make_unique<VoiceSession>(
+            *recorder_, *transcriber_,
+            VoiceSession::Callbacks{
+                [this](VoiceSession::State state, const std::string& error) { on_voice_state(state, error); },
+                [this](std::string text) {
+                    if (!dispatcher_) return;
+                    dispatcher_->post([this, text = std::move(text)] {
+                        if (controller_) controller_->submit_voice_text(text);
+                    });
+                }});
 
         add_tray_icon();
         const hotkey::Status hotkey_status = controller_->apply_stored_hotkey();
@@ -215,6 +243,12 @@ private:
         }
     }
 
+    void post_ui(const std::string& json) {
+        // Every window shows the same state, so every message goes to both.
+        if (main_) main_->post(json);
+        if (panel_) panel_->post(json);
+    }
+
     // Brings the native side in line with the controller's settings.
     void sync_shell() {
         if (!controller_) return;
@@ -228,6 +262,17 @@ private:
             panel_->apply_theme();
         }
         if (main_) main_->apply_theme();
+        if (transcriber_) transcriber_->configure({s.voice_base_url, s.voice_model});
+        if (speech_) {
+            SapiVoice::Config speech;
+            speech.voice = s.speech_voice;
+            speech.rate = s.speech_rate;
+            speech.pitch = s.speech_pitch;
+            speech.neural_base_url = s.speech_base_url;
+            speech.neural_model = s.speech_model;
+            speech_->configure(std::move(speech));
+            speech_->set_muted(s.muted);
+        }
         update_tray_tip();
     }
 
@@ -294,6 +339,7 @@ private:
         AppendMenuW(menu, MF_STRING, kCmdOpen, L"Open Buddy");
         AppendMenuW(menu, MF_STRING, kCmdSettings, L"Settings");
         AppendMenuW(menu, MF_STRING | (controller_->settings().muted ? MF_CHECKED : 0), kCmdMute, L"Mute");
+        AppendMenuW(menu, MF_STRING, kCmdCancelVoice, L"Cancel voice");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kCmdQuit, L"Quit");
         SetMenuDefaultItem(menu, kCmdOpen, FALSE);
@@ -313,6 +359,7 @@ private:
                 controller_->set_muted(!controller_->settings().muted);
                 sync_shell();
                 break;
+            case kCmdCancelVoice: cancel_voice(); break;
             case kCmdQuit: DestroyWindow(host_); break;
             default: break;
         }
@@ -320,6 +367,10 @@ private:
 
     void quit() {
         log::info("quitting");
+        // Voice first: a recording in progress is dropped (never sent), and speech goes quiet.
+        KillTimer(host_, kVoiceTimer);
+        voice_.reset();
+        speech_.reset();
         if (controller_) controller_->shutdown();   // also releases the hotkey
         remove_tray_icon();
         panel_.reset();
@@ -353,7 +404,11 @@ private:
                 return 0;
 
             case WM_HOTKEY:
-                if (controller_ && panel_ && static_cast<int>(wparam) == controller_->hotkey_id()) panel_->toggle();
+                if (controller_ && static_cast<int>(wparam) == controller_->hotkey_id()) on_voice_hotkey();
+                return 0;
+
+            case WM_TIMER:
+                if (wparam == kVoiceTimer) on_voice_timer();
                 return 0;
 
             case win::kMsgTray:
@@ -388,6 +443,87 @@ private:
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
 
+    // ---- voice ----
+
+    // The voice shortcut was pressed. Hold it to talk and release to send; a quick tap keeps
+    // recording until the next press (core/push_to_talk.h).
+    void on_voice_hotkey() {
+        if (!voice_) return;
+        const VoiceSession::State state = voice_->state();
+        if (state == VoiceSession::State::Transcribing) return;   // one question at a time
+        // The recording may have ended without the shortcut (cancelled from the tray, say).
+        if (state != VoiceSession::State::Listening) push_to_talk_.reset();
+
+        switch (push_to_talk_.on_press(GetTickCount64())) {
+            case voice::PushToTalk::Action::Start:
+                if (speech_) speech_->stop();   // so Buddy does not talk over, or record, itself
+                if (panel_) panel_->show_at_cursor();
+                if (voice_->start()) {
+                    SetTimer(host_, kVoiceTimer, kVoicePollMs, nullptr);
+                } else {
+                    push_to_talk_.reset();
+                }
+                break;
+            case voice::PushToTalk::Action::Stop: finish_voice_recording(); break;
+            case voice::PushToTalk::Action::None: break;
+        }
+    }
+
+    // Runs only while recording: watches for the shortcut being released, and for the recorder
+    // stopping by itself (its length limit, or the microphone going away).
+    void on_voice_timer() {
+        if (!voice_ || voice_->state() != VoiceSession::State::Listening) {
+            KillTimer(host_, kVoiceTimer);
+            push_to_talk_.reset();
+            return;
+        }
+        const auto action = push_to_talk_.on_poll(GetTickCount64(), voice_hotkey_down());
+        if (action == voice::PushToTalk::Action::Latch) {
+            post_ui(protocol::voice_state("listening_toggle", ""));
+        }
+        if (action == voice::PushToTalk::Action::Stop || !voice_->capturing()) finish_voice_recording();
+    }
+
+    void finish_voice_recording() {
+        KillTimer(host_, kVoiceTimer);
+        push_to_talk_.reset();
+        if (voice_) voice_->stop();   // sends what was recorded for transcription
+    }
+
+    // Tray and UI "Cancel voice": drop any recording or transcription, and stop talking.
+    void cancel_voice() {
+        KillTimer(host_, kVoiceTimer);
+        push_to_talk_.reset();
+        if (voice_) voice_->cancel();
+        if (speech_) speech_->stop();
+    }
+
+    // Called on whichever thread the voice session reports from.
+    void on_voice_state(VoiceSession::State state, const std::string& error) {
+        if (!dispatcher_) return;
+        dispatcher_->post([this, state, error] {
+            const char* code = "idle";
+            if (state == VoiceSession::State::Listening) code = "listening";
+            else if (state == VoiceSession::State::Transcribing) code = "transcribing";
+            else if (state == VoiceSession::State::Error) code = "error";
+            if (overlay_) overlay_->set_indicator(state == VoiceSession::State::Listening);
+            post_ui(protocol::voice_state(code, error));
+        });
+    }
+
+    // GetAsyncKeyState reports every key as up while an elevated window has the keyboard. The
+    // shortcut then looks released at once, which push_to_talk treats as a tap.
+    bool voice_hotkey_down() const {
+        if (!controller_) return false;
+        const auto binding = controller_->hotkey_binding();
+        if (!binding) return false;
+        const auto down = [](int key) { return (GetAsyncKeyState(key) & 0x8000) != 0; };
+        if ((binding->modifiers & hotkey::kAlt) && !down(VK_MENU)) return false;
+        if ((binding->modifiers & hotkey::kCtrl) && !down(VK_CONTROL)) return false;
+        if ((binding->modifiers & hotkey::kShift) && !down(VK_SHIFT)) return false;
+        return down(static_cast<int>(binding->key));
+    }
+
     // Like GET_X_LPARAM / GET_Y_LPARAM, for a position packed into a WPARAM.
     static int GET_X_LPARAM_(WPARAM value) { return static_cast<int>(static_cast<short>(LOWORD(value))); }
     static int GET_Y_LPARAM_(WPARAM value) { return static_cast<int>(static_cast<short>(HIWORD(value))); }
@@ -408,6 +544,13 @@ private:
     std::unique_ptr<MainWindow> main_;
     std::unique_ptr<PanelWindow> panel_;
     std::unique_ptr<OverlayWindow> overlay_;
+
+    // Voice. The session uses the recorder and the transcriber, so it is declared after them.
+    std::unique_ptr<SapiVoice> speech_;
+    std::unique_ptr<WasapiRecorder> recorder_;
+    std::unique_ptr<LocalTranscriber> transcriber_;
+    std::unique_ptr<VoiceSession> voice_;
+    voice::PushToTalk push_to_talk_;
 };
 
 // Debug builds only: BUDDY_PROFILE=<name> gives the run its own data folder, Credential Manager

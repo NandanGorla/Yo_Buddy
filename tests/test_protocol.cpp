@@ -240,3 +240,69 @@ TEST_CASE("protocol: history and UI command messages", "[protocol]") {
     CHECK(json::parse(focus_input())["type"] == "ui.focus_input");
     CHECK(json::parse(show_settings())["type"] == "ui.show_settings");
 }
+
+TEST_CASE("protocol: voice messages parse", "[protocol][voice]") {
+    expect<VoiceCancel>(envelope("voice.cancel", json::object()));
+
+    const auto voice = expect<SetVoice>(
+        envelope("settings.set_voice", {{"base_url", "http://127.0.0.1:8000/v1"}, {"model", "whisper-1"}}));
+    CHECK(voice.base_url == "http://127.0.0.1:8000/v1");
+    CHECK(voice.model == "whisper-1");
+
+    const auto speech = expect<SetSpeech>(envelope("settings.set_speech", {{"voice", "Microsoft Zira Desktop"},
+                                                                            {"base_url", "http://localhost:8880/v1"},
+                                                                            {"model", "kokoro"},
+                                                                            {"rate", -3},
+                                                                            {"pitch", 10}}));
+    CHECK(speech.voice == "Microsoft Zira Desktop");
+    CHECK(speech.base_url == "http://localhost:8880/v1");
+    CHECK(speech.model == "kokoro");
+    CHECK(speech.rate == -3);
+    CHECK(speech.pitch == 10);
+
+    // The neural server is optional: an empty URL and model mean Windows voices only.
+    const auto windows_only = expect<SetSpeech>(envelope(
+        "settings.set_speech", {{"voice", ""}, {"base_url", ""}, {"model", ""}, {"rate", 0}, {"pitch", 0}}));
+    CHECK(windows_only.base_url.empty());
+    CHECK(windows_only.model.empty());
+}
+
+TEST_CASE("protocol: voice messages are validated", "[protocol][voice]") {
+    CHECK(error_of(envelope("voice.cancel", {{"extra", 1}})) == "invalid_payload");
+
+    // Transcription needs both a server and a model.
+    CHECK(error_of(envelope("settings.set_voice", {{"base_url", ""}, {"model", "whisper-1"}})) == "invalid_payload");
+    CHECK(error_of(envelope("settings.set_voice", {{"base_url", "http://127.0.0.1:8000/v1"}, {"model", ""}})) ==
+          "invalid_payload");
+    CHECK(error_of(envelope("settings.set_voice", {{"base_url", "http://127.0.0.1:8000/v1"}, {"model", "bad model"}})) ==
+          "invalid_payload");
+    CHECK(error_of(envelope("settings.set_voice", {{"base_url", "http://127.0.0.1:8000/v1"}})) == "invalid_payload");
+
+    const auto speech = [](const json& changes) {
+        json payload = {{"voice", ""}, {"base_url", ""}, {"model", ""}, {"rate", 0}, {"pitch", 0}};
+        payload.update(changes);
+        return envelope("settings.set_speech", payload);
+    };
+    expect<SetSpeech>(speech(json::object()));
+    CHECK(error_of(speech({{"rate", 11}})) == "invalid_payload");
+    CHECK(error_of(speech({{"rate", -11}})) == "invalid_payload");
+    CHECK(error_of(speech({{"pitch", 11}})) == "invalid_payload");
+    CHECK(error_of(speech({{"rate", 1.5}})) == "invalid_payload");
+    CHECK(error_of(speech({{"pitch", "high"}})) == "invalid_payload");
+    CHECK(error_of(speech({{"model", "bad model"}})) == "invalid_payload");
+    CHECK(error_of(speech({{"voice", std::string(kMaxSpeechVoiceLength + 1, 'v')}})) == "invalid_payload");
+    CHECK(error_of(speech({{"base_url", std::string(kMaxBaseUrlLength + 1, 'u')}})) == "invalid_payload");
+}
+
+TEST_CASE("protocol: voice.state is a well-formed envelope", "[protocol][voice]") {
+    const json listening = json::parse(voice_state("listening", ""));
+    CHECK(listening["type"] == "voice.state");
+    CHECK(listening["payload"] == json{{"state", "listening"}, {"error", ""}});
+
+    const json toggle = json::parse(voice_state("listening_toggle", ""));
+    CHECK(toggle["payload"]["state"] == "listening_toggle");
+
+    const json failed = json::parse(voice_state("error", "No microphone was found."));
+    CHECK(failed["payload"]["state"] == "error");
+    CHECK(failed["payload"]["error"] == "No microphone was found.");
+}

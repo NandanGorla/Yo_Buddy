@@ -160,3 +160,62 @@ TEST_CASE("settings: bad shell options fall back or are clamped", "[settings]") 
     // Stored spellings are normalised.
     CHECK(from_json(R"({"hotkey":"shift + alt + space"})").hotkey == "Alt+Shift+Space");
 }
+
+TEST_CASE("settings: voice defaults keep reply text on this PC", "[settings][voice]") {
+    const Settings s = defaults();
+    // Windows voices are the default. No neural speech server is configured, so nothing is
+    // posted anywhere when a reply is read aloud.
+    CHECK(s.speech_base_url.empty());
+    CHECK(s.speech_model.empty());
+    CHECK(s.speech_voice.empty());
+    CHECK(s.speech_rate == 0);
+    CHECK(s.speech_pitch == 0);
+    CHECK(s.voice_base_url == "http://127.0.0.1:8000/v1");
+    CHECK(s.voice_model == "whisper-1");
+}
+
+TEST_CASE("settings: voice and speech options round-trip", "[settings][voice]") {
+    Settings s = defaults();
+    s.voice_base_url = "http://localhost:9000/v1";
+    s.voice_model = "small.en";
+    s.speech_voice = "Microsoft Zira Desktop";
+    s.speech_base_url = "http://127.0.0.1:8880/v1";
+    s.speech_model = "kokoro";
+    s.speech_rate = -4;
+    s.speech_pitch = 7;
+
+    const Settings back = from_json(to_json(s));
+    CHECK(back.voice_base_url == "http://localhost:9000/v1");
+    CHECK(back.voice_model == "small.en");
+    CHECK(back.speech_voice == "Microsoft Zira Desktop");
+    CHECK(back.speech_base_url == "http://127.0.0.1:8880/v1");
+    CHECK(back.speech_model == "kokoro");
+    CHECK(back.speech_rate == -4);
+    CHECK(back.speech_pitch == 7);
+
+    // Switching the neural server off again is kept too.
+    s.speech_base_url.clear();
+    s.speech_model.clear();
+    const Settings off = from_json(to_json(s));
+    CHECK(off.speech_base_url.empty());
+    CHECK(off.speech_model.empty());
+}
+
+TEST_CASE("settings: bad voice and speech options fall back or are clamped", "[settings][voice]") {
+    std::vector<std::string> warnings;
+    const Settings s = from_json(R"({
+        "voice": {"base_url": "https://example.com/v1", "model": ""},
+        "speech": {"voice": 7, "base_url": "https://example.com/v1", "model": "bad model",
+                   "rate": 99, "pitch": -99}
+    })",
+                                 &warnings);
+    // Recorded speech and reply text may only go to this PC: remote servers are dropped.
+    CHECK(s.voice_base_url == "http://127.0.0.1:8000/v1");
+    CHECK(s.voice_model == "whisper-1");   // an empty model is not a model
+    CHECK(s.speech_voice.empty());
+    CHECK(s.speech_base_url.empty());
+    CHECK(s.speech_model.empty());
+    CHECK(s.speech_rate == 10);
+    CHECK(s.speech_pitch == -10);
+    CHECK(warnings.size() == 5);
+}
